@@ -1,6 +1,5 @@
 ### TODO 
 # convert operators to sparse?
-# fix color mappings so they r fixed despite changing phimin, phimax, and add colorbar 
 
 using LinearAlgebra, DifferentialEquations, JuMP, Ipopt,
         Plots, LaTeXStrings; 
@@ -9,14 +8,14 @@ println("running...");
 ############ -------------------------------------------------- ############
 ############ ------------- PHYSICAL PARAMETERS ---------------- ############
 ############ -------------------------------------------------- ############
-R = 130; # radius of force-free reference sphere
-r = 150; # TODO radius of initial condition sphere
-E0 = 440; # base Young's modulus
-h = 20 # bilayer thickness
-b = 5; # exponential decrease of stiffness
+R = 130; # radius of force-free reference sphere (130)
+r = 150; # TODO radius of initial condition sphere (150)
+E0 = 440; # base Young's modulus (440)
+h = 20 # bilayer thickness (20)
+b = 5; # exponential decrease of stiffness (5)
 κ = 1; # TODO morphogen stress upregulation coefficient 
-ζ = 0.2; # morphogen decay rate 
-D = 0.01; # morphogen diffusion coefficient 
+ζ = 0.2; # morphogen decay rate (0.2)
+D = 0; # 0.01; # morphogen diffusion coefficient (0.01)
 
 E(phi) = E0 * h * exp(-b*phi); # elasticity function
 f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function 
@@ -24,16 +23,15 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 ############ -------------------------------------------------- ############
 ############ ------------- NUMERICAL PARAMETERS --------------- ############
 ############ -------------------------------------------------- ############
-Ndisc = 1000; # number of discretisation points on s 
+Ndisc = 100; # number of discretisation points on s 
 smin = -pi/2; smax = pi/2; # bounds of s values
 dt = 0.1; # time discretisation
-tmax = 1; # max time 
-
+tmax = 50.0; # max time 
 
 ############ -------------------------------------------------- ############
 ############ ----------- VISUALISATION PARAMETERS ------------- ############
 ############ -------------------------------------------------- ############
-plotRes = 5; # how many timesteps per plot
+plotRes = 10000000; # how many timesteps per plot
 cmap = cgrad(:viridis); # colormap for morphogen concentration 
 
 ############ -------------------------------------------------- ############
@@ -44,9 +42,15 @@ ds = Si[2] - Si[1];
 Tn = 0:dt:tmax; # grid of t values 
 Ntimes = length(Tn); 
 
+# preparing quantities to be saved. Each qty is saved BEFORE and AFTER sim
+ϕtot = zeros(Ntimes); 
+
 ############ -------------------------------------------------- ############
 ############ ------------- DISCRETISED OPERATORS -------------- ############
 ############ -------------------------------------------------- ############
+# identity 
+In = I(Ndisc) * 1.0;
+
 # first deriv 
 P = Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)); # main section 
 P = Matrix(P); # convert out of sparse to modify elements 
@@ -63,27 +67,10 @@ Q[1,:] /= ds; Q[Ndisc, :] /= ds; # add 1/ds factor to f/b diffs on top/bottom ro
 Q /= ds^2; # scale 
 
 ############ -------------------------------------------------- ############
-############ ------------- FUNCTIONALS AND QTYs --------------- ############
-############ -------------------------------------------------- ############
-function trStrSq(X, Y, Xdash, Ydash)
-    # takes vectors of the surface parameterisation x(s), y(s) and derivatives w.r.t. s
-    # returns a vector containing the trace of the square of the strain tensor at each s
-    t1 = (P*Xdash).^2 .+ (P*Ydash).^2 .- R^2;
-    t2 = t1*0; 
-    t2[2:end-1] = X[2:end-1].^2 ./ (CosS[2:end-1].^2); # interior is just x/cos^2 
-    t2[1] = r^2; t2[end] = r^2; # boundary is when x(s)~r cos(s)
-    t2 = t2 .- R^2; 
-
-    en = 1/(4*R^4) * (t1.^2 .+ t2.^2);
-    return en; 
-end
-
-
-############ -------------------------------------------------- ############
 ############ ---------- AUXILIARY / USEFUL FUNCTIONS ---------- ############
 ############ -------------------------------------------------- ############
 ϕ0sc = 1/ζ * f(0.5 * ((r^2 - R^2)/R^2)^2); # steady-state morphogen scalar
-ϕ0 = Si .* 0 .+ ϕ0sc; # steady-state morphogen over the full grid 
+ϕ0 = zeros(Ndisc) .+ ϕ0sc; # steady-state morphogen over the full grid 
 trStrSq0 = 0.5 * ((r^2 - R^2)/R^2)^2; # initial (constant) trace of strain tensor squared
 
 X0 = r * cos.(Si); Y0 = r * sin.(Si); # initial condition shape 
@@ -100,6 +87,24 @@ y0quad(s) = r * (s);
 ############ -------------------------------------------------- ############
 CosS = cos.(Si); SinS = sin.(Si); # presaving trigs 
 TanS = 0 * CosS; TanS[2:end-1] = tan.(Si[2:end-1]); # presaving Tan, with 0 on bdy to avoid undefineds
+V = ((1/dt) + ζ)*In .+ D/R^2*(diagm(TanS)*P .- Q); # morphogen update matrix 
+Vinv = inv(V); # inverse save speeds up calc 
+
+############ -------------------------------------------------- ############
+############ ------------- FUNCTIONALS AND QTYs --------------- ############
+############ -------------------------------------------------- ############
+function trStrSq(X, Y, Xdash, Ydash)
+    # takes vectors of the surface parameterisation x(s), y(s) and derivatives w.r.t. s
+    # returns a vector containing the trace of the square of the strain tensor at each s
+    t1 = (P*Xdash).^2 .+ (P*Ydash).^2 .- R^2;
+    t2 = t1 * 0; 
+    t2[2:end-1] = X[2:end-1].^2 ./ (CosS[2:end-1].^2); # interior is just x/cos^2 
+    t2[1] = r^2; t2[end] = r^2; # boundary is when x(s)~r cos(s)
+    t2 = t2 .- R^2; 
+
+    en = 1/(4*R^4) * (t1.^2 .+ t2.^2);
+    return en; 
+end
 
 ############ -------------------------------------------------- ############
 ############ ------------------ UPDATE STEPS ------------------ ############
@@ -109,20 +114,29 @@ function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     # and derivatives IN PLACE, by minimising the energy functional 
 
     # finally, update derivatives 
-    Xdash = P*X; Ydash = P*Y;
+    Xdash .= P*X; Ydash .= P*Y;
 end;
 
 function UpdateMorphogen!(ϕ, X, Y, ϵ)
     # takes the current state data, and updates the morphogen concentration 
     # IN PLACE, by performing an implicit update step 
-    ϕ = ϕ * 0 .+ ϕ;
+    ϕ .= Vinv * ( (1/dt)*ϕ .+ f.(ϵ));
 end;
 
 function ApplyBCs!(ϕ, X, Y)
     # takes the current state, and enforces boundary conditions 
     # Dirichelet BCs in X, and Neumann in ϕ and Y 
-    X = X*0 .+ X; 
+    X .= X*0 .+ X; 
 end;
+
+function SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵ,
+                    ϕtot)
+    # Saves data relevant to the current state IN PLACE. Takes state data,
+    #   and relevant data vecs to save into
+    # ϕtot: total morphogen present in the organism, appropriately normalised 
+
+    ϕtot[n+1] = sum(ϕ) * ds; 
+end
 
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
@@ -133,21 +147,13 @@ function visualise(ϕ, X, Y, titleTxt = false)
     # optionally adds a provided title 
     # returns the plot object for displaying and saving
 
-    nphi = (ϕ .- minimum(ϕ)) ./ (maximum(ϕ) - minimum(ϕ)); # normalise for color 
+    # Plot actual deformed shape, colored by morphogen concentration 
+    plt = plot(X, Y, line_z = ϕ, lw = 3, c = cmap, label = "Hydra shape");
+    plot!(-X, Y, line_z = ϕ, lw = 3, c = cmap, label = "")
 
-    # first, plot actual deformed shape 
-    plt = plot(X, Y, lw = 2, color = :black, label = "Hydra shape");
-    plot!(-X, Y, lw = 2, color = :black, label = "");
-
-    # next, plot initial shape 
+    # plot initial shape 
     plot!(X0, Y0, lw = 1, color = :grey, ls = :dash, label = "Initial shape"); 
     plot!(-X0, Y0, lw = 1, color = :grey, ls = :dash, label = "");
-
-    # next, color by morphogen concentration 
-    for i in 1:Ndisc-1
-        plot!(X[i:i+1], Y[i:i+1], lw = 3, color = get(cmap, nphi[i]), label = "");
-        plot!(-X[i:i+1], Y[i:i+1], lw = 3, color = get(cmap, nphi[i]), label = "");
-    end
 
     # other plot necessities
     xlabel!("x"); ylabel!("y");
@@ -159,8 +165,8 @@ function visualise(ϕ, X, Y, titleTxt = false)
     return plt;
 end
 
-plt = visualise(ϕ0 .* Si, x0quad.(Si), y0quad.(Si));
-display(plt)
+# plt = visualise(ϕ0 .* Si, x0quad.(Si), y0quad.(Si));
+# display(plt)
 
 
 ############ -------------------------------------------------- ############
@@ -196,30 +202,44 @@ end
 ############ -------------------------------------------------- ############
 X = X0; Y = Y0; 
 Xdash = X0dash; Ydash = Y0dash;
-ϕ = ϕ0 .* Si; 
-runsim = false 
+ϵ = trStrSq(X, Y, Xdash, Ydash); 
+ϕ = ϕ0; ϕ = ϕ0 * 0 .+ 0.5;
+runsim = true 
 if runsim
-    for n = 1:Ntimes 
+    global ϵ
+    SaveData!(0, ϕ, X, Y, Xdash, Ydash, ϵ,
+                    ϕtot)
+
+    for n = 1:Ntimes-1
         t = Tn[n];
 
-        # Step 1: update shape of X(s), Y(s) and derivatives 
+        # Step A1: update shape of X(s), Y(s) and derivatives 
         UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
 
-        # Step 2: compute new strain tensor squared 
+        # Step A2: compute new strain tensor squared 
         ϵ = trStrSq(X, Y, Xdash, Ydash); 
 
-        # Step 3: evolve morphogen
+        # Step A3: evolve morphogen
         UpdateMorphogen!(ϕ, X, Y, ϵ); 
 
-        # Step 4: apply BCs 
+        # Step B1: apply BCs 
         ApplyBCs!(ϕ, X, Y); 
 
-        # Step 5: visualise if necessary 
-        if mod(n, plotRes) == 0
-            tstr = round(t); 
+        # Step C1: save necessary data 
+        SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵ,
+                    ϕtot)
+
+        # Step C2: visualise if necessary, always visualising first and last 
+        if mod(n-1, plotRes) == 0 || n == Ntimes
+            tstr = round(t, digits = 1); 
             pltAnim = visualise(ϕ, X, Y, "t = $tstr");
             display(pltAnim);
         end
     end
+
+    plt = plot(Tn, ϕtot);
+    display(plt); 
 end
+
+
 
