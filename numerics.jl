@@ -1,7 +1,7 @@
 ### TODO 
-# convert operators to sparse?
+# more sophisticated numerical integral?
 
-using LinearAlgebra, DifferentialEquations, JuMP, Ipopt,
+using LinearAlgebra, DifferentialEquations, JuMP, Ipopt, HiGHS
         Plots, LaTeXStrings; 
 println("running...");
 
@@ -9,29 +9,30 @@ println("running...");
 ############ ------------- PHYSICAL PARAMETERS ---------------- ############
 ############ -------------------------------------------------- ############
 R = 130; # radius of force-free reference sphere (130)
-r = 150; # TODO radius of initial condition sphere (150)
+r = 150; # TODO radius of initial condition sphere 
 E0 = 440; # base Young's modulus (440)
 h = 20 # bilayer thickness (20)
 b = 5; # exponential decrease of stiffness (5)
 κ = 1; # TODO morphogen stress upregulation coefficient 
 ζ = 0.2; # morphogen decay rate (0.2)
-D = 0; # 0.01; # morphogen diffusion coefficient (0.01)
+D = 0.0; # 0.01; # morphogen diffusion coefficient (0.01)
 
-E(phi) = E0 * h * exp(-b*phi); # elasticity function
+E(ϕ) = E0 * h * exp(-b*ϕ); # elasticity function
 f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function 
 
 ############ -------------------------------------------------- ############
 ############ ------------- NUMERICAL PARAMETERS --------------- ############
 ############ -------------------------------------------------- ############
 Ndisc = 100; # number of discretisation points on s 
-smin = -pi/2; smax = pi/2; # bounds of s values
+smin = -π/2; smax = π/2; # bounds of s values
 dt = 0.1; # time discretisation
 tmax = 50.0; # max time 
+Ω = 1e8; # punishing potential for volume deviation 
 
 ############ -------------------------------------------------- ############
 ############ ----------- VISUALISATION PARAMETERS ------------- ############
 ############ -------------------------------------------------- ############
-plotRes = 10000000; # how many timesteps per plot
+plotRes = Inf; # how many timesteps per plot
 cmap = cgrad(:viridis); # colormap for morphogen concentration 
 
 ############ -------------------------------------------------- ############
@@ -69,9 +70,10 @@ Q /= ds^2; # scale
 ############ -------------------------------------------------- ############
 ############ ---------- AUXILIARY / USEFUL FUNCTIONS ---------- ############
 ############ -------------------------------------------------- ############
-ϕ0sc = 1/ζ * f(0.5 * ((r^2 - R^2)/R^2)^2); # steady-state morphogen scalar
-ϕ0 = zeros(Ndisc) .+ ϕ0sc; # steady-state morphogen over the full grid 
 trStrSq0 = 0.5 * ((r^2 - R^2)/R^2)^2; # initial (constant) trace of strain tensor squared
+ϕ0sc = 1/ζ * f(trStrSq0); # steady-state morphogen scalar
+ϕ0 = zeros(Ndisc) .+ ϕ0sc; # steady-state morphogen over the full grid 
+vol0 = 4/3 * π * r^3;
 
 X0 = r * cos.(Si); Y0 = r * sin.(Si); # initial condition shape 
 X0dash = -Y0; Y0dash = X0; # initial derivatives 
@@ -91,7 +93,7 @@ V = ((1/dt) + ζ)*In .+ D/R^2*(diagm(TanS)*P .- Q); # morphogen update matrix
 Vinv = inv(V); # inverse save speeds up calc 
 
 ############ -------------------------------------------------- ############
-############ ------------- FUNCTIONALS AND QTYs --------------- ############
+############ ------------ FUNCTIONALS AND QTYs --------------- ############
 ############ -------------------------------------------------- ############
 function trStrSq(X, Y, Xdash, Ydash)
     # takes vectors of the surface parameterisation x(s), y(s) and derivatives w.r.t. s
@@ -104,6 +106,24 @@ function trStrSq(X, Y, Xdash, Ydash)
 
     en = 1/(4*R^4) * (t1.^2 .+ t2.^2);
     return en; 
+end
+
+function ElEn(ϕ, X, Y, Xdash, Ydash)
+    # Elastic energy functional 
+    fn = E.(ϕ)/2 .* trStrSq(X, Y, Xdash, Ydash); # integrand
+    return sum(fn) * ds; 
+end
+
+function VolInt(X, Y, Xdash, Ydash)
+    # volume integral 
+    fn = X.^2 .* Ydash; # integrand 
+    return sum(fn) * ds;
+end
+
+function EnergyFunctional(ϕ, X, Y)
+    # total energy functional, including elastic energy and a punishing potential 
+    Xdash = P*X; Ydash = P*Y;
+    return ElEn(ϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Y, Xdash, Ydash) - vol0)^2;
 end
 
 ############ -------------------------------------------------- ############
@@ -126,7 +146,13 @@ end;
 function ApplyBCs!(ϕ, X, Y)
     # takes the current state, and enforces boundary conditions 
     # Dirichelet BCs in X, and Neumann in ϕ and Y 
-    X .= X*0 .+ X; 
+    X[1] = 0; X[end] = 0; # Dirichelet BCs in X 
+
+    Y[1] = 1/3 * (4*Y[2] - Y[3]);
+    Y[end] = 1/3 * (4*Y[end-1] - Y[end-2]);
+
+    ϕ[1] = 1/3 * (4*ϕ[2] - ϕ[3]);
+    ϕ[end] = 1/3 * (4*ϕ[end-1] - ϕ[end-2]);
 end;
 
 function SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵ,
@@ -203,8 +229,8 @@ end
 X = X0; Y = Y0; 
 Xdash = X0dash; Ydash = Y0dash;
 ϵ = trStrSq(X, Y, Xdash, Ydash); 
-ϕ = ϕ0; ϕ = ϕ0 * 0 .+ 0.5;
-runsim = true 
+ϕ = ϕ0; ϕ = zeros(Ndisc) .+ Si .+ smax;
+runsim = false 
 if runsim
     global ϵ
     SaveData!(0, ϕ, X, Y, Xdash, Ydash, ϵ,
@@ -230,7 +256,7 @@ if runsim
                     ϕtot)
 
         # Step C2: visualise if necessary, always visualising first and last 
-        if mod(n-1, plotRes) == 0 || n == Ntimes
+        if mod(n-1, plotRes) == 0 || n == Ntimes-1
             tstr = round(t, digits = 1); 
             pltAnim = visualise(ϕ, X, Y, "t = $tstr");
             display(pltAnim);
@@ -241,5 +267,14 @@ if runsim
     display(plt); 
 end
 
+ff(x) = sum(x.^2);
 
+shapeModel = Model(Ipopt.Optimizer)
+@variable(shapeModel, xModel[1:Ndisc]); @variable(shapeModel, yModel[1:Ndisc]);
+@constraint(shapeModel, xModel[1] == 0); @constraint(shapeModel, xModel[end] == 0);
+@constraint(shapeModel, (P*yModel)[1] == 0); @constraint(shapeModel, (P*yModel)[end] == 0);
+@objective(shapeModel, Min, EnergyFunctional(ϕ, xModel, yModel));
+optimize!(shapeModel);
+x = JuMP.value.(xModel); y = JuMP.value.(yModel);
 
+println("Done");
