@@ -1,9 +1,13 @@
 ### TODO 
-# more sophisticated numerical integral?
 
-using LinearAlgebra, DifferentialEquations, JuMP, Ipopt, HiGHS
-        Plots, LaTeXStrings; 
+using LinearAlgebra, DifferentialEquations, JuMP, Ipopt, HiGHS, Plots, LaTeXStrings; 
 println("running...");
+
+############ -------------------------------------------------- ############
+############ ---------------- FILE HANDLING ------------------- ############
+############ -------------------------------------------------- ############
+gitFP = "C:/Users/rgray/OneDrive/ryan/Uni/HONOURS/hons-proj";
+suppressFP = gitFP * "/suppress.txt";
 
 ############ -------------------------------------------------- ############
 ############ ------------- PHYSICAL PARAMETERS ---------------- ############
@@ -13,9 +17,9 @@ r = 150; # TODO radius of initial condition sphere
 E0 = 440; # base Young's modulus (440)
 h = 20 # bilayer thickness (20)
 b = 5; # exponential decrease of stiffness (5)
-κ = 1; # TODO morphogen stress upregulation coefficient 
+κ = 1.0; # TODO morphogen stress upregulation coefficient (1 for now)
 ζ = 0.2; # morphogen decay rate (0.2)
-D = 0.0; # 0.01; # morphogen diffusion coefficient (0.01)
+D = 0.1; # morphogen diffusion coefficient (0.01)
 
 E(ϕ) = E0 * h * exp(-b*ϕ); # elasticity function
 f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function 
@@ -23,10 +27,10 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 ############ -------------------------------------------------- ############
 ############ ------------- NUMERICAL PARAMETERS --------------- ############
 ############ -------------------------------------------------- ############
-Ndisc = 100; # number of discretisation points on s 
+Ndisc = 50; # number of discretisation points on s 
 smin = -π/2; smax = π/2; # bounds of s values
 dt = 0.1; # time discretisation
-tmax = 50.0; # max time 
+tmax = 1000*dt; # max time 
 Ω = 1e8; # punishing potential for volume deviation 
 
 ############ -------------------------------------------------- ############
@@ -45,6 +49,7 @@ Ntimes = length(Tn);
 
 # preparing quantities to be saved. Each qty is saved BEFORE and AFTER sim
 ϕtot = zeros(Ntimes); 
+ϵtot = zeros(Ntimes);
 
 ############ -------------------------------------------------- ############
 ############ ------------- DISCRETISED OPERATORS -------------- ############
@@ -67,13 +72,17 @@ Q[Ndisc, Ndisc] = 2; Q[Ndisc, Ndisc-1] = -5; Q[Ndisc, Ndisc-2] = 4;  Q[Ndisc, Nd
 Q[1,:] /= ds; Q[Ndisc, :] /= ds; # add 1/ds factor to f/b diffs on top/bottom row 
 Q /= ds^2; # scale 
 
+# integral over total s domain, using trapezoid rule
+integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
+
 ############ -------------------------------------------------- ############
 ############ ---------- AUXILIARY / USEFUL FUNCTIONS ---------- ############
 ############ -------------------------------------------------- ############
-trStrSq0 = 0.5 * ((r^2 - R^2)/R^2)^2; # initial (constant) trace of strain tensor squared
-ϕ0sc = 1/ζ * f(trStrSq0); # steady-state morphogen scalar
+ϵ0sc = 0.5 * ((r^2 - R^2)/R^2)^2; # scalar initial (constant) trace of strain tensor squared
+ϵ0 = zeros(Ndisc) .+ ϵ0sc; # over s-grid
+ϕ0sc = 1/ζ * f.(ϵ0); # steady-state morphogen scalar
 ϕ0 = zeros(Ndisc) .+ ϕ0sc; # steady-state morphogen over the full grid 
-vol0 = 4/3 * π * r^3;
+vol0 = 4/3 * π * r^3; # initial volume
 
 X0 = r * cos.(Si); Y0 = r * sin.(Si); # initial condition shape 
 X0dash = -Y0; Y0dash = X0; # initial derivatives 
@@ -104,26 +113,39 @@ function trStrSq(X, Y, Xdash, Ydash)
     t2[1] = r^2; t2[end] = r^2; # boundary is when x(s)~r cos(s)
     t2 = t2 .- R^2; 
 
-    en = 1/(4*R^4) * (t1.^2 .+ t2.^2);
-    return en; 
+    ϵn = 1/(4*R^4) * (t1.^2 .+ t2.^2);
+    return ϵn; 
 end
 
 function ElEn(ϕ, X, Y, Xdash, Ydash)
     # Elastic energy functional 
     fn = E.(ϕ)/2 .* trStrSq(X, Y, Xdash, Ydash); # integrand
-    return sum(fn) * ds; 
+    return integrateSdom(fn); 
 end
 
 function VolInt(X, Y, Xdash, Ydash)
     # volume integral 
     fn = X.^2 .* Ydash; # integrand 
-    return sum(fn) * ds;
+    return integrateSdom(fn);
 end
 
 function EnergyFunctional(ϕ, X, Y)
     # total energy functional, including elastic energy and a punishing potential 
     Xdash = P*X; Ydash = P*Y;
     return ElEn(ϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Y, Xdash, Ydash) - vol0)^2;
+end
+
+function MorphogenFunctional(ϕ, ϕn, X, Y, ϵ)
+    # total energy for the morphogen equation 
+    volEl = R^2 * CosS; # volume element
+
+    integrand1 = (ϕ .- ϕn).^2 /(2*dt) .* volEl; # time-deriv bit
+    integrand2 = -f.(ϵ) .* ϕ .* volEl; # morphogen production bit
+    integrand3 = ζ * (ϕ).^2 /2 .* volEl; # disassociation bit
+    integrand4 = D * (P*ϕ).^2 /2 .* CosS; # diffusion bit, volEl already incorporated
+    
+    integrandTot = integrand1 .+ integrand2 .+ integrand3 .+ integrand4;
+    return integrateSdom(integrandTot);
 end
 
 ############ -------------------------------------------------- ############
@@ -143,6 +165,21 @@ function UpdateMorphogen!(ϕ, X, Y, ϵ)
     ϕ .= Vinv * ( (1/dt)*ϕ .+ f.(ϵ));
 end;
 
+function UpdateMorphogen2!(ϕ, X, Y, ϵ)
+    # takes the current state data, and updates the morphogen concentration 
+    # IN PLACE, by performing an implicit update step 
+    ϕn = ϕ;
+    morphogenModel = Model(Ipopt.Optimizer);
+    @variable(morphogenModel, ϕModel[1:Ndisc]);
+    set_start_value.(ϕModel, ϕn);
+    @constraint(morphogenModel, (P*ϕModel)[1] == 0);
+    @constraint(morphogenModel, (P*ϕModel)[end] == 0);
+    @objective(morphogenModel, Min, MorphogenFunctional(ϕModel, ϕn, X, Y, ϵ));
+    redirect_stdout((()->optimize!(morphogenModel)),open(suppressFP, "w"));
+    # optimize!(morphogenModel);
+    ϕ .= JuMP.value.(ϕModel);
+end;
+
 function ApplyBCs!(ϕ, X, Y)
     # takes the current state, and enforces boundary conditions 
     # Dirichelet BCs in X, and Neumann in ϕ and Y 
@@ -156,12 +193,13 @@ function ApplyBCs!(ϕ, X, Y)
 end;
 
 function SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵ,
-                    ϕtot)
+                    ϕtot, ϵtot)
     # Saves data relevant to the current state IN PLACE. Takes state data,
     #   and relevant data vecs to save into
-    # ϕtot: total morphogen present in the organism, appropriately normalised 
-
-    ϕtot[n+1] = sum(ϕ) * ds; 
+    # ϕtot: total morphogen present in the organism
+    # ϵtot: total strain
+    ϕtot[n+1] = integrateSdom(ϕ); 
+    ϵtot[n+1] = integrateSdom(ϵ);
 end
 
 ############ -------------------------------------------------- ############
@@ -180,6 +218,10 @@ function visualise(ϕ, X, Y, titleTxt = false)
     # plot initial shape 
     plot!(X0, Y0, lw = 1, color = :grey, ls = :dash, label = "Initial shape"); 
     plot!(-X0, Y0, lw = 1, color = :grey, ls = :dash, label = "");
+
+    # dummy bit to get a good color scale 
+    plot!([0.0, 0.01], [0.0, 0.01], lw = 0, 
+            line_z = [0.0, 2*ϕ0[1]], c = cmap, label = "");
 
     # other plot necessities
     xlabel!("x"); ylabel!("y");
@@ -228,11 +270,16 @@ end
 ############ -------------------------------------------------- ############
 X = X0; Y = Y0; 
 Xdash = X0dash; Ydash = Y0dash;
-ϵ = trStrSq(X, Y, Xdash, Ydash); 
-ϕ = ϕ0; ϕ = zeros(Ndisc) .+ Si .+ smax;
-runsim = false 
+ϵ = trStrSq(X, Y, Xdash, Ydash)
+
+ϕ0rand = ϕ0 .* (1 .+ 0.8*(rand(Ndisc) .- 0.5));
+ϕ0scale = zeros(Ndisc) .+ Si .+ smax;
+
+ϕ = zeros(Ndisc);
+ϕ .= ϕ0rand;
+runsim = true 
 if runsim
-    global ϵ
+    global ϵ; 
     SaveData!(0, ϕ, X, Y, Xdash, Ydash, ϵ,
                     ϕtot)
 
@@ -246,14 +293,16 @@ if runsim
         ϵ = trStrSq(X, Y, Xdash, Ydash); 
 
         # Step A3: evolve morphogen
-        UpdateMorphogen!(ϕ, X, Y, ϵ); 
+        # UpdateMorphogen!(ϕ, X, Y, ϵ); 
+
+        UpdateMorphogen2!(ϕ, X, Y, ϵ);
 
         # Step B1: apply BCs 
-        ApplyBCs!(ϕ, X, Y); 
+        # ApplyBCs!(ϕ, X, Y); 
 
         # Step C1: save necessary data 
         SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵ,
-                    ϕtot)
+                    ϕtot, ϵtot)
 
         # Step C2: visualise if necessary, always visualising first and last 
         if mod(n-1, plotRes) == 0 || n == Ntimes-1
@@ -267,14 +316,14 @@ if runsim
     display(plt); 
 end
 
-ff(x) = sum(x.^2);
 
-shapeModel = Model(Ipopt.Optimizer)
-@variable(shapeModel, xModel[1:Ndisc]); @variable(shapeModel, yModel[1:Ndisc]);
-@constraint(shapeModel, xModel[1] == 0); @constraint(shapeModel, xModel[end] == 0);
-@constraint(shapeModel, (P*yModel)[1] == 0); @constraint(shapeModel, (P*yModel)[end] == 0);
-@objective(shapeModel, Min, EnergyFunctional(ϕ, xModel, yModel));
-optimize!(shapeModel);
-x = JuMP.value.(xModel); y = JuMP.value.(yModel);
+# shapeModel = Model(Ipopt.Optimizer)
+# @variable(shapeModel, xModel[1:Ndisc]); @variable(shapeModel, yModel[1:Ndisc]);
+# @constraint(shapeModel, xModel[1] == 0); @constraint(shapeModel, xModel[end] == 0);
+# @constraint(shapeModel, (P*yModel)[1] == 0); @constraint(shapeModel, (P*yModel)[end] == 0);
+# @objective(shapeModel, Min, EnergyFunctional(ϕ, xModel, yModel));
+# optimize!(shapeModel);
+# x = JuMP.value.(xModel); y = JuMP.value.(yModel);
 
-println("Done");
+
+
