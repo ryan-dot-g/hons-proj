@@ -17,9 +17,9 @@ r = 150; # TODO radius of initial condition sphere
 E0 = 440; # base Young's modulus (440)
 h = 20 # bilayer thickness (20)
 b = 5; # exponential decrease of stiffness (5)
-κ = 0.0; # TODO morphogen stress upregulation coefficient (1 for now)
-ζ = 0.0; # morphogen decay rate (0.2)
-D = 50.0; # morphogen diffusion coefficient (0.01)
+κ = 1.0; # TODO morphogen stress upregulation coefficient (1 for now)
+ζ = 0.2; # morphogen decay rate (0.2)
+D = 5.0; # morphogen diffusion coefficient (0.01)
 
 E(ϕ) = E0 * h * exp(-b*ϕ); # elasticity function
 f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function 
@@ -27,11 +27,11 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 ############ -------------------------------------------------- ############
 ############ ------------- NUMERICAL PARAMETERS --------------- ############
 ############ -------------------------------------------------- ############
-Ndisc = 50; # number of discretisation points on s 
-smin = -π/2; smax = π/2; # bounds of s values
-dt = 0.3; # time discretisation
-tmax = 1000*dt; # max time 
-Ω = 1e8; # punishing potential for volume deviation 
+Ndisc = 50; # number of discretisation points on s (50)
+smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
+dt = 0.3; # time discretisation (0.1)
+tmax = 10*dt; # max time (1e3 * dt)
+Ω = 1e4; # punishing potential for volume deviation (1e8)
 
 ############ -------------------------------------------------- ############
 ############ ----------- VISUALISATION PARAMETERS ------------- ############
@@ -71,18 +71,33 @@ integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
 ############ -------------------------------------------------- ############
 ϵ0sc = 0.5 * ((r^2 - R^2)/R^2)^2; # scalar initial (constant) trace of strain tensor squared
 ϵ0 = zeros(Ndisc) .+ ϵ0sc; # over s-grid
+V0 = 4/3 * r^3; # initial volume, normalised by pi
+
 ϕ0sc = 1/ζ * f.(ϵ0sc); # steady-state morphogen scalar
 ϕ0 = zeros(Ndisc) .+ ϕ0sc; # steady-state morphogen over the full grid 
-vol0 = 4/3 * π * r^3; # initial volume
+ϕ0test = zeros(Ndisc) .+ SinS * 3 .+ 3; # non-uniform but obeys BCs
 
 X0 = r * cos.(Si); Y0 = r * sin.(Si); # initial condition shape 
 X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives 
 Xundef = R * cos.(Si); Yundef = R * sin.(Si); # undeformed shape
 
-# 2nd-order approximations of r cos(s), r sin(s) to use as initial guesses for 
-#   x(s), y(s) at steady-state
-x0quad(s) = r * ( 1 - 4/pi^2 * s^2 + 0.2 * (s^2 - pi^2/4) * s );
-y0quad(s) = r * (s);
+# test approximations of r cos(s), r sin(s) to use as initial guesses for x(s), y(s) to test
+# shape evolution. 
+# To ensure BCs, using quadratic approximation of x(s) with roots at +-pi/2 plus an interesting perturbation 
+# Just using the actual y(s) function 
+x0temp(s) = r * ( 1 - 4/π^2 * s^2 + 0.2 * (s^2 - π^2/4) * s );
+y0test(s) = r * sin(s);
+x0tempDash(s) = r * ( -8/π^2 * s + 0.2 * (3*s^2 - π^2/4) );
+y0testDash(s) = r * cos(s); 
+# normalise so the volume is satisfied
+vtemp = VolInt(x0temp.(Si), y0test.(Si), x0tempDash.(Si), y0testDash.(Si));
+# x^2 term in integral so normalise by square root of desired volume
+# and add slight noise so punishing potential is similar order for this and X0 
+normK = sqrt(V0/vtemp) * 1.000001; 
+x0test(s) = normK * x0temp(s); x0testDash(s) = normK * x0tempDash(s);
+# finally create them as arrays 
+X0test = x0test.(Si); Y0test = y0test.(Si); 
+X0testDash = x0testDash.(Si); Y0testDash = y0testDash.(Si);
 
 ############ -------------------------------------------------- ############
 ############ ------------- PRESAVING CALCULATIONS ------------- ############
@@ -98,11 +113,10 @@ function trStrSq(X, Y, Xdash, Ydash)
     t1 = (Xdash).^2 .+ (Ydash).^2 .- R^2;
     t2 = t1 * 0; 
     t2[interior] = X[interior].^2 ./ (CosS[interior].^2); # interior is just x/cos^2 
-    t2[1] = r^2; t2[end] = r^2; # boundary is when x(s)~r cos(s)
+    t2[[1,end]] .= r^2; # boundary is when x(s)~r cos(s)
     t2 = t2 .- R^2; 
 
-    ϵn = 1/(4*R^4) * (t1.^2 .+ t2.^2);
-    return ϵn; 
+    return 1/(4*R^4) * (t1.^2 .+ t2.^2); 
 end
 
 function ElEn(ϕ, X, Y, Xdash, Ydash)
@@ -113,14 +127,14 @@ end
 
 function VolInt(X, Y, Xdash, Ydash)
     # volume integral 
-    fn = X.^2 .* Ydash; # integrand 
+    fn = X.^2 .* Ydash; # integrand normalised by pi 
     return integrateSdom(fn);
 end
 
-function EnergyFunctional(ϕ, X, Y)
+function EnergyFunctional(ϕ, X, Y, Xdash, Ydash, Ω)
     # total energy functional, including elastic energy and a punishing potential 
-    Xdash = P*X; Ydash = P*Y;
-    return ElEn(ϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Y, Xdash, Ydash) - vol0)^2;
+    # takes punishing potential as input so it can be run with/without volume constraint at various strengths
+    return ElEn(ϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2;
 end
 
 function MorphogenFunctional(ϕ, ϕn, X, Y, ϵ)
@@ -142,6 +156,35 @@ end
 function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     # takes the current state data (shape and morphogen concentration), and updates X, Y 
     # and derivatives IN PLACE, by minimising the energy functional 
+    # shapeModel = Model(Ipopt.Optimizer)
+    # @variable(shapeModel, xModel[1:Ndisc]); @variable(shapeModel, yModel[1:Ndisc]);
+    # set_start_value.(xModel, X); set_start_value.(yModel, Y);
+
+    # @constraint(shapeModel, xModel[1] == 0); @constraint(shapeModel, xModel[end] == 0);
+    # @constraint(shapeModel, (P*yModel)[1] == 0); @constraint(shapeModel, (P*yModel)[end] == 0);
+
+    # @objective(shapeModel, Min, EnergyFunctional(ϕ, xModel, yModel));
+    # redirect_stdout((()->optimize!(shapeModel)),open(suppressFP, "w"));
+    # X .= JuMP.value.(xModel); Y .= JuMP.value.(yModel);
+
+    # finally, update derivatives 
+    Xdash .= P*X; Ydash .= P*Y;
+end;
+
+function UpdateShapeTest!(ϕ, X, Y, Xdash, Ydash, Ω)
+    # takes the current state data (shape and morphogen concentration), and updates X, Y 
+    # and derivatives IN PLACE, by minimising the energy functional 
+    shapeModel = Model(Ipopt.Optimizer)
+    @variable(shapeModel, xModel[1:Ndisc]); @variable(shapeModel, yModel[1:Ndisc]);
+    set_start_value.(xModel, X); set_start_value.(yModel, Y);
+
+    @constraint(shapeModel, xModel[1] == 0); @constraint(shapeModel, xModel[end] == 0);
+    @constraint(shapeModel, (P*yModel)[1] == 0); @constraint(shapeModel, (P*yModel)[end] == 0);
+    # @constraint(shapeModel, VolInt(xModel, yModel, P*xModel, P*yModel) == V0);
+
+    @objective(shapeModel, Min, EnergyFunctional(ϕ, xModel, yModel, P*xModel, P*yModel, Ω));
+    redirect_stdout((()->optimize!(shapeModel)),open(suppressFP, "w"));
+    X .= JuMP.value.(xModel); Y .= JuMP.value.(yModel);
 
     # finally, update derivatives 
     Xdash .= P*X; Ydash .= P*Y;
@@ -154,11 +197,13 @@ function UpdateMorphogen!(ϕ, X, Y, ϵ)
     morphogenModel = Model(Ipopt.Optimizer);
     @variable(morphogenModel, ϕModel[1:Ndisc]);
     set_start_value.(ϕModel, ϕn);
+
     @constraint(morphogenModel, (P*ϕModel)[1] == 0);
     @constraint(morphogenModel, (P*ϕModel)[end] == 0);
+
     @objective(morphogenModel, Min, MorphogenFunctional(ϕModel, ϕn, X, Y, ϵ));
     redirect_stdout((()->optimize!(morphogenModel)),open(suppressFP, "w"));
-    # optimize!(morphogenModel);
+
     ϕ .= JuMP.value.(ϕModel);
 end;
 
@@ -240,16 +285,17 @@ end
 ############ -------------------------------------------------- ############
 ############ ---------------- TIME EVOLUTION ------------------ ############
 ############ -------------------------------------------------- ############
-X = X0; Y = Y0; 
-Xdash = X0dash; Ydash = Y0dash;
+# initialise X, Y, ϕ arrays from the various possibilities 
+# shape arrays first
+X = zeros(Ndisc); Y = zeros(Ndisc); Xdash = zeros(Ndisc); Ydash = zeros(Ndisc);
+X .= X0; Y .= Y0; 
+Xdash .= X0dash; Ydash .= Y0dash;
 ϵ = trStrSq(X, Y, Xdash, Ydash)
 
-ϕ0rand = ϕ0 .* (1 .+ 0.8*(rand(Ndisc) .- 0.5));
-ϕ0scale = zeros(Ndisc) .+ Si .+ smax;
-ϕ0sensible = zeros(Ndisc) .+ SinS * 3 .+ 3; # obeys BCs
-
+# now morphogen array
 ϕ = zeros(Ndisc);
-ϕ .= ϕ0sensible;
+ϕ .= ϕ0test;
+
 runsim = true 
 if runsim
     global ϵ; 
@@ -286,13 +332,9 @@ if runsim
 end
 
 
-# shapeModel = Model(Ipopt.Optimizer)
-# @variable(shapeModel, xModel[1:Ndisc]); @variable(shapeModel, yModel[1:Ndisc]);
-# @constraint(shapeModel, xModel[1] == 0); @constraint(shapeModel, xModel[end] == 0);
-# @constraint(shapeModel, (P*yModel)[1] == 0); @constraint(shapeModel, (P*yModel)[end] == 0);
-# @objective(shapeModel, Min, EnergyFunctional(ϕ, xModel, yModel));
-# optimize!(shapeModel);
-# x = JuMP.value.(xModel); y = JuMP.value.(yModel);
-
-
+plt = visualise(ϕ0, X0test, Y0test, "before"); display(plt);
+UpdateShapeTest!(ϕ0, X0test, Y0test, X0testDash, Y0testDash, 0)
+plt = visualise(ϕ0, X0test, Y0test, "middle"); display(plt);
+UpdateShapeTest!(ϕ0, X0test, Y0test, X0testDash, Y0testDash, Ω)
+plt = visualise(ϕ0, X0test, Y0test, "after"); display(plt);
 
