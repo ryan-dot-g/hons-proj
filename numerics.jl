@@ -13,7 +13,7 @@ suppressFP = gitFP * "/suppress.txt";
 ############ ------------- PHYSICAL PARAMETERS ---------------- ############
 ############ -------------------------------------------------- ############
 R = 130; # radius of force-free reference sphere (130)
-r = 150; # TODO radius of initial condition sphere 
+r = 150; # TODO radius of initial condition sphere (150 for now) 
 E0 = 440; # base Young's modulus (440)
 h = 20 # bilayer thickness (20)
 b = 5; # exponential decrease of stiffness (5)
@@ -31,7 +31,9 @@ Ndisc = 50; # number of discretisation points on s (50)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.3; # time discretisation (0.1)
 tmax = 10*dt; # max time (1e3 * dt)
-Ω = 1e4; # punishing potential for volume deviation (1e8)
+Ω = 1e4; # large number: punishing potential for volume deviation (1e8)
+ω = 0.0; # small number: surface friction 
+dsint = 0.0; # small number: distance inside the s grid to start at to avoid div0
 
 ############ -------------------------------------------------- ############
 ############ ----------- VISUALISATION PARAMETERS ------------- ############
@@ -42,7 +44,7 @@ cmap = cgrad(:viridis); # colormap for morphogen concentration
 ############ -------------------------------------------------- ############
 ############ ---------------- NUMERICAL SETUP ----------------- ############
 ############ -------------------------------------------------- ############
-Si = range(smin, smax, Ndisc); # grid of s values 
+Si = range(smin+dsint, smax-dsint, Ndisc); # grid of s values 
 ds = Si[2] - Si[1]; 
 Tn = 0:dt:tmax; # grid of t values 
 Ntimes = length(Tn); 
@@ -103,6 +105,7 @@ X0testDash = x0testDash.(Si); Y0testDash = y0testDash.(Si);
 ############ ------------- PRESAVING CALCULATIONS ------------- ############
 ############ -------------------------------------------------- ############
 CosS = cos.(Si); SinS = sin.(Si); # presaving trigs 
+volEl = R^2 * CosS; # volume element
 
 ############ -------------------------------------------------- ############
 ############ ------------ FUNCTIONALS AND QTYs --------------- ############
@@ -112,8 +115,13 @@ function trStrSq(X, Y, Xdash, Ydash)
     # returns a vector containing the trace of the square of the strain tensor at each s
     t1 = (Xdash).^2 .+ (Ydash).^2 .- R^2;
     t2 = t1 * 0; 
-    t2[interior] = X[interior].^2 ./ (CosS[interior].^2); # interior is just x/cos^2 
-    t2[[1,end]] .= r^2; # boundary is when x(s)~r cos(s)
+    # handle boundary different if s coords go all the way to the boundary 
+    if Si[1] == -π/2
+        t2[interior] = X[interior].^2 ./ (CosS[interior].^2); # interior is just x/cos^2 
+        t2[[1,end]] .= r^2; # boundary is when x(s)~r cos(s)
+    else
+        t2 = X.^2 ./ CosS.^2;
+    end
     t2 = t2 .- R^2; 
 
     return 1/(4*R^4) * (t1.^2 .+ t2.^2); 
@@ -121,7 +129,7 @@ end
 
 function ElEn(ϕ, X, Y, Xdash, Ydash)
     # Elastic energy functional 
-    fn = E.(ϕ)/2 .* trStrSq(X, Y, Xdash, Ydash); # integrand
+    fn = E.(ϕ)/2 .* trStrSq(X, Y, Xdash, Ydash) .* volEl; # integrand over S0 including volel
     return integrateSdom(fn); 
 end
 
@@ -131,16 +139,23 @@ function VolInt(X, Y, Xdash, Ydash)
     return integrateSdom(fn);
 end
 
+function SurfaceFriction(X, Y)
+    # number that models friction, as the difference between the COM and zero
+    # center of mass in x direction is naturally 0 by symm
+    ycom = integrateSdom(Y);
+    return (ycom)^2
+end
+
 function EnergyFunctional(ϕ, X, Y, Xdash, Ydash, Ω)
     # total energy functional, including elastic energy and a punishing potential 
     # takes punishing potential as input so it can be run with/without volume constraint at various strengths
-    return ElEn(ϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2;
+    # additionally takes surface friction 
+    return ElEn(ϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2 +
+                ω * SurfaceFriction(X, Y);
 end
 
 function MorphogenFunctional(ϕ, ϕn, X, Y, ϵ)
     # total energy for the morphogen equation 
-    volEl = R^2 * CosS; # volume element
-
     integrand1 = (ϕ .- ϕn).^2 /(2*dt) .* volEl; # time-deriv bit
     integrand2 = -f.(ϵ) .* ϕ .* volEl; # morphogen production bit
     integrand3 = ζ * (ϕ).^2 /2 .* volEl; # disassociation bit
@@ -153,6 +168,17 @@ end
 ############ -------------------------------------------------- ############
 ############ ------------------ UPDATE STEPS ------------------ ############
 ############ -------------------------------------------------- ############
+function Renormalise!(X, Y, Xdash, Ydash, V0)
+    # takes a shape parameterisation, and modifies in-place to ensure that the volume 
+    # remains equal to some V0. 
+    # uses the fact that integral propto x^2 y', so cube root normalisation constant 
+    # to apply equally to x, y, x', y' and ensure volume works
+    vtemp = VolInt(X, Y, Xdash, Ydash);
+    normk = cbrt(V0/vtemp);
+    X .= X * normk; Y .= Y * normk; 
+    Xdash .= Xdash * normk; Ydash .= Ydash * normk;
+end 
+
 function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     # takes the current state data (shape and morphogen concentration), and updates X, Y 
     # and derivatives IN PLACE, by minimising the energy functional 
@@ -337,4 +363,32 @@ UpdateShapeTest!(ϕ0, X0test, Y0test, X0testDash, Y0testDash, 0)
 plt = visualise(ϕ0, X0test, Y0test, "middle"); display(plt);
 UpdateShapeTest!(ϕ0, X0test, Y0test, X0testDash, Y0testDash, Ω)
 plt = visualise(ϕ0, X0test, Y0test, "after"); display(plt);
+
+# try again
+X0test = x0test.(Si); Y0test = y0test.(Si); X0testDash = x0testDash.(Si); Y0testDash = y0testDash.(Si);
+plt = visualise(ϕ0, X0test, Y0test, "before 2"); display(plt);
+UpdateShapeTest!(ϕ0, X0test, Y0test, X0testDash, Y0testDash, 0)
+plt = visualise(ϕ0, X0test, Y0test, "middle 2"); display(plt);
+
+vtemp = VolInt(X0test, Y0test, X0testDash, Y0testDash);
+println(vtemp)
+normk = cbrt(V0/vtemp);
+X0test *= normk; Y0test *= normk;
+vtemp2 = VolInt(X0test, Y0test, X0testDash, Y0testDash);
+println(vtemp2)
+plt = visualise(ϕ0, X0test, Y0test, "after 2"); display(plt);
+
+# 3rd try
+X0test .= X0; Y0test .= Y0; X0testDash .= X0dash; Y0testDash .= Y0dash;
+plt = visualise(ϕ0test, X0test, Y0test, "before 3"); display(plt);
+UpdateShapeTest!(ϕ0test, X0test, Y0test, X0testDash, Y0testDash, 0)
+plt = visualise(ϕ0test, X0test, Y0test, "middle 3"); display(plt);
+
+vtemp = VolInt(X0test, Y0test, X0testDash, Y0testDash);
+println(vtemp)
+normk = cbrt(V0/vtemp);
+X0test *= normk; Y0test *= normk; X0testDash *= normk; Y0testDash *= normk;
+vtemp2 = VolInt(X0test, Y0test, X0testDash, Y0testDash);
+println(vtemp2)
+plt = visualise(ϕ0test, X0test, Y0test, "after 3"); display(plt);
 
