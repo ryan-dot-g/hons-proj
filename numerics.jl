@@ -69,6 +69,12 @@ P /= (2*ds); # scale
 integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
 
 ############ -------------------------------------------------- ############
+############ ------------- PRESAVING CALCULATIONS ------------- ############
+############ -------------------------------------------------- ############
+CosS = cos.(Si); SinS = sin.(Si); # presaving trigs 
+volEl = R^2 * CosS; # volume element
+
+############ -------------------------------------------------- ############
 ############ -------- STEADY-STATE / INITIAL FUNCTIONS -------- ############
 ############ -------------------------------------------------- ############
 ϵ0sc = 0.5 * ((r^2 - R^2)/R^2)^2; # scalar initial (constant) trace of strain tensor squared
@@ -83,29 +89,7 @@ X0 = r * cos.(Si); Y0 = r * sin.(Si); # initial condition shape
 X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives 
 Xundef = R * cos.(Si); Yundef = R * sin.(Si); # undeformed shape
 
-# test approximations of r cos(s), r sin(s) to use as initial guesses for x(s), y(s) to test
-# shape evolution. 
-# To ensure BCs, using quadratic approximation of x(s) with roots at +-pi/2 plus an interesting perturbation 
-# Just using the actual y(s) function 
-x0temp(s) = r * ( 1 - 4/π^2 * s^2 + 0.2 * (s^2 - π^2/4) * s );
-y0test(s) = r * sin(s);
-x0tempDash(s) = r * ( -8/π^2 * s + 0.2 * (3*s^2 - π^2/4) );
-y0testDash(s) = r * cos(s); 
-# normalise so the volume is satisfied
-vtemp = VolInt(x0temp.(Si), y0test.(Si), x0tempDash.(Si), y0testDash.(Si));
-# x^2 term in integral so normalise by square root of desired volume
-# and add slight noise so punishing potential is similar order for this and X0 
-normK = sqrt(V0/vtemp) * 1.000001; 
-x0test(s) = normK * x0temp(s); x0testDash(s) = normK * x0tempDash(s);
-# finally create them as arrays 
-X0test = x0test.(Si); Y0test = y0test.(Si); 
-X0testDash = x0testDash.(Si); Y0testDash = y0testDash.(Si);
 
-############ -------------------------------------------------- ############
-############ ------------- PRESAVING CALCULATIONS ------------- ############
-############ -------------------------------------------------- ############
-CosS = cos.(Si); SinS = sin.(Si); # presaving trigs 
-volEl = R^2 * CosS; # volume element
 
 ############ -------------------------------------------------- ############
 ############ ------------ FUNCTIONALS AND QTYs --------------- ############
@@ -242,6 +226,28 @@ function SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵ,
     ϕtot[n+1] = integrateSdom(ϕ); 
     ϵtot[n+1] = integrateSdom(ϵ);
 end
+
+############ -------------------------------------------------- ############
+############ ------------------ BETTER ICs -------------------- ############
+############ -------------------------------------------------- ############
+
+# test approximations of r cos(s), r sin(s) to use as initial guesses for x(s), y(s) to test
+# shape evolution. 
+# To ensure BCs, using quadratic approximation of x(s) with roots at +-pi/2 plus an interesting perturbation 
+# Just using the actual y(s) function 
+x0temp(s) = r * ( 1 - 4/π^2 * s^2 + 0.2 * (s^2 - π^2/4) * s );
+y0test(s) = r * sin(s);
+x0tempDash(s) = r * ( -8/π^2 * s + 0.2 * (3*s^2 - π^2/4) );
+y0testDash(s) = r * cos(s); 
+# normalise so the volume is satisfied
+vtemp = VolInt(x0temp.(Si), y0test.(Si), x0tempDash.(Si), y0testDash.(Si));
+# x^2 term in integral so normalise by square root of desired volume
+# and add slight noise so punishing potential is similar order for this and X0 
+normK = sqrt(V0/vtemp) * 1.000001; 
+x0test(s) = normK * x0temp(s); x0testDash(s) = normK * x0tempDash(s);
+# finally create them as arrays 
+X0test = x0test.(Si); Y0test = y0test.(Si); 
+X0testDash = x0testDash.(Si); Y0testDash = y0testDash.(Si);
 
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
