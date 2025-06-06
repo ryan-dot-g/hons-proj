@@ -12,8 +12,8 @@ suppressFP = gitFP * "/suppress.txt";
 ############ -------------------------------------------------- ############
 ############ ------------- PHYSICAL PARAMETERS ---------------- ############
 ############ -------------------------------------------------- ############
-R = 130; # radius of force-free reference sphere (130)
-r = 150; # TODO radius of initial condition sphere (150 for now) 
+R = 80; # radius of force-free reference sphere (80)
+r = 120; # TODO radius of initial condition sphere (120 for now) 
 E0 = 440; # base Young's modulus (440)
 h = 20 # bilayer thickness (20)
 b = 5; # exponential decrease of stiffness (5)
