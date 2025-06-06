@@ -1,8 +1,11 @@
 ### TODO 
-# get shape updates working with non-uniform morphogen 
+# get shape updates working with non-uniform morphogen DONE 
+# get surface friction working better: could pin the base, or penalise movement
 # rewrite morphogen with Optim instead of jump etc.????
+# restore OG parameters if it still works
 
-using LinearAlgebra, DifferentialEquations, Optim, Plots, LaTeXStrings, HiGHS, JuMP, Ipopt; 
+using LinearAlgebra, DifferentialEquations, Plots, LaTeXStrings;
+using Optim, ForwardDiff, HiGHS, JuMP, Ipopt;
 println("running...");
 
 ############ -------------------------------------------------- ############
@@ -16,25 +19,25 @@ suppressFP = gitFP * "/suppress.txt";
 ############ -------------------------------------------------- ############
 R = 80; # radius of force-free reference sphere (80)
 r = 120; # radius of initial condition sphere (120 for now) 
-E0 = 440; # base Young's modulus (440)
-h = 20 # bilayer thickness (20)
-b = 5; # exponential decrease of stiffness (5)
+E0 = 50.0; # base Young's modulus (440). NOTE: this interacts with Ω
+h = 1.0 # bilayer thickness (20). NOTE: this interacts with Ω
+b = 1.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
 κ = 1.0; # TODO morphogen stress upregulation coefficient (1 for now)
 ζ = 0.2; # morphogen decay rate (0.2)
 D = 5.0; # morphogen diffusion coefficient (0.01)
 
-E(ϕ) = 1.0; # E0 * h * exp(-b*ϕ); # elasticity function
+E(ϕ) = E0 * h * exp(-b*ϕ); # elasticity function
 f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function 
 
 ############ -------------------------------------------------- ############
 ############ ------------- NUMERICAL PARAMETERS --------------- ############
 ############ -------------------------------------------------- ############
-Ndisc = 50; # number of discretisation points on s (50)
+Ndisc = 30; # number of discretisation points on s (50)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.3; # time discretisation (0.1)
 tmax = 10*dt; # max time (1e3 * dt)
 Ω = 1e2; # not too large number: punishing potential for volume deviation (1e2)
-ω = 0.0; # small number: surface friction 
+ω = 1e1; # not too large number: surface friction (1e1)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
 
 ############ -------------------------------------------------- ############
@@ -85,12 +88,10 @@ V0 = 4/3 * r^3; # initial volume, normalised by pi
 
 ϕ0sc = 1/ζ * f.(ϵ0sc); # steady-state morphogen scalar
 ϕ0 = zeros(Ndisc) .+ ϕ0sc; # steady-state morphogen over the full grid 
-ϕ0test = zeros(Ndisc) .+ SinS * 3 .+ 3; # non-uniform but obeys BCs
 
 X0 = r * CosS; Y0 = r * SinS; # initial condition shape 
 X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives 
 Xundef = R * CosS; Yundef = R * SinS; # undeformed shape
-
 
 ############ -------------------------------------------------- ############
 ############ ------------ FUNCTIONALS AND QTYs --------------- ############
@@ -127,24 +128,24 @@ end
 function SurfaceFriction(X, Y)
     # number that models friction, as the difference between the COM and zero
     # center of mass in x direction is naturally 0 by symm
-    ycom = integrateSdom(Y);
-    return (ycom)^2
+    # return sum(Y)^2;
+
+    # alternatively, pin the base 
+    return (Y[1] - Y0[1])^2
 end
 
-function EnergyFunctional(ϕ, X, Y, Xdash, Ydash, Ω)
-    # total energy functional, including elastic energy and a punishing potential 
-    # takes punishing potential as input so it can be run with/without volume constraint at various strengths
-    # additionally takes surface friction 
+function EnergyFunctional(ϕ, X, Y, Xdash, Ydash)
+    # total energy functional, including elastic energy and a punishing potential and surface friction
     return ElEn(ϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2 +
                 ω * SurfaceFriction(X, Y);
 end
 
-function EFwrapped(fullData)
+function EFwrapped(fullData, ϕ)
     # wrapper for the energy functional. Unpacks the data, computes derivatives, then
     # returns the energy functional to optimise 
     X = fullData[1:Ndisc]; Y = fullData[Ndisc+1:end];
-    Xdash .= P*X; Ydash .= P*Y;
-    return EnergyFunctional(ϕ, X, Y, Xdash, Ydash, Ω);
+    Xdash = P*X; Ydash = P*Y;
+    return EnergyFunctional(ϕ, X, Y, Xdash, Ydash);
 end
 
 function MorphogenFunctional(ϕ, ϕn, X, Y, ϵ)
@@ -225,8 +226,12 @@ y0tempDash(s) = r * cos(s);
 α = 0.2; # weight in the 'interesting' initial condition
 X0test = α*x0temp.(Si) + (1-α)*X0; Y0test = α*y0temp.(Si) + (1-α)*Y0;
 X0testDash = α*x0tempDash.(Si) + (1-α)*X0dash; Y0testDash = α*y0tempDash.(Si) + (1-α)*Y0dash;
-
 Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
+
+# non-uniform but obeys BCs
+α2 = 0.2; # weight again 
+ϕ0temp = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
+ϕ0test = α2*ϕ0temp .+ (1-α2)*ϕ0; 
 
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
@@ -240,6 +245,10 @@ function visualise(ϕ, X, Y, titleTxt = false)
     # Plot actual deformed shape, colored by morphogen concentration 
     plt = plot(X, Y, line_z = ϕ, lw = 3, c = cmap, label = "Hydra shape", aspect_ratio = :equal);
     plot!(-X, Y, line_z = ϕ, lw = 3, c = cmap, label = "")
+
+    # Plot material points 
+    scatter!(X, Y, ms = 1.5, color = :black, label = "")
+    scatter!(-X, Y, ms = 1.5, color = :black, label = "")
 
     # plot initial shape 
     plot!(X0, Y0, lw = 1, color = :grey, ls = :dash, label = "Initial shape"); 
@@ -343,12 +352,14 @@ end
 ############ -------------------------------------------------- ############
 ############ ---------------- TESTING SHAPE UPDATES ------------------ ############
 ############ -------------------------------------------------- ############
-plt = visualise(ϕ0, X0test, Y0test, "before"); display(plt);
+plt = visualise(ϕ0test, X0test, Y0test, "before"); display(plt);
 
-result = optimize(EFwrapped, [X0test; Y0test], LBFGS());
+result = optimize(x -> EFwrapped(x, ϕ0test), 
+                    [X0test; Y0test], method = LBFGS(), 
+                    autodiff = :forward, iterations = 100000);
 fullX = result.minimizer;
 X = fullX[1:Ndisc]; Y = fullX[Ndisc+1:end];
 
-plt = visualise(ϕ, X, Y, "after"); display(plt)
+plt = visualise(ϕ0test, X, Y, "after"); display(plt)
 
 
