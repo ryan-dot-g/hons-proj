@@ -1,19 +1,17 @@
 ### TODO 
 # get surface friction working better: could pin the base (current job), or penalise movement
-# rewrite morphogen with Optim instead of jump etc.????
 # restore OG parameters if it still works (long term)
 # relax convergence requirements (tried but could try harder)
 # add a warning for if optim fails
 
 using LinearAlgebra, DifferentialEquations, Plots, LaTeXStrings;
-using Optim, ForwardDiff, HiGHS, JuMP, Ipopt;
+using Optim, ForwardDiff;
 println("running...");
 
 ############ -------------------------------------------------- ############
 ############ ---------------- FILE HANDLING ------------------- ############
 ############ -------------------------------------------------- ############
 gitFP = "C:/Users/rgray/OneDrive/ryan/Uni/HONOURS/hons-proj";
-suppressFP = gitFP * "/suppress.txt";
 
 ############ -------------------------------------------------- ############
 ############ ------------- PHYSICAL PARAMETERS ---------------- ############
@@ -151,6 +149,7 @@ end
 
 function MorphogenFunctional(ϕ, ϕn, X, Y, ϵ)
     # total energy for the morphogen equation 
+    # ϕn is the previous state 
     integrand1 = (ϕ .- ϕn).^2 /(2*dt) .* volEl; # time-deriv bit
     integrand2 = -f.(ϵ) .* ϕ .* volEl; # morphogen production bit
     integrand3 = ζ * (ϕ).^2 /2 .* volEl; # disassociation bit
@@ -177,6 +176,7 @@ end
 function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     # takes the current state data (shape and morphogen concentration), and updates X, Y 
     # and derivatives IN PLACE, by minimising the energy functional 
+    # returns results of the optim
     result = optimize(x -> EFwrapped(x, ϕ), 
                     [X; Y], method = LBFGS(), 
                     autodiff = :forward, iterations = 100000);
@@ -184,24 +184,19 @@ function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     X .= fullX[1:Ndisc]; Y .= fullX[Ndisc+1:end];
     # finally, update derivatives 
     Xdash .= P*X; Ydash .= P*Y;
+    return result;
 end;
 
 function UpdateMorphogen!(ϕ, X, Y, ϵ)
     # takes the current state data, and updates the morphogen concentration 
     # IN PLACE, by performing an implicit update step 
-    ϕn = ϕ;
-    morphogenModel = Model(Ipopt.Optimizer);
-    @variable(morphogenModel, ϕModel[1:Ndisc]);
-    set_start_value.(ϕModel, ϕn);
-
-    @constraint(morphogenModel, (P*ϕModel)[1] == 0);
-    @constraint(morphogenModel, (P*ϕModel)[end] == 0);
-
-    @objective(morphogenModel, Min, MorphogenFunctional(ϕModel, ϕn, X, Y, ϵ));
-    redirect_stdout((()->optimize!(morphogenModel)),open(suppressFP, "w"));
-
-    ϕ .= JuMP.value.(ϕModel);
-end;
+    ϕn = ϕ; # previous value of morphogen 
+    result = optimize(ϕ -> MorphogenFunctional(ϕ, ϕn, X, Y, ϵ), 
+                    ϕn, method = LBFGS(), 
+                    autodiff = :forward, iterations = 100000);
+    ϕ .= result.minimizer;
+    return result; 
+end
 
 function SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵ,
                     ϕtot, ϵtot)
@@ -360,9 +355,8 @@ end
 X = X0test; Y = Y0test; Xdash = X0testDash; Ydash = Y0testDash
 ϕ = ϕ0test;
 
-plt = visualise(ϕ, X, Y, "before"); display(plt);
-UpdateShape!(ϕ, X, Y, Xdash, Ydash)
-
-plt = visualise(ϕ, X, Y, "after"); display(plt)
+# plt = visualise(ϕ, X, Y, "before"); display(plt);
+# UpdateShape!(ϕ, X, Y, Xdash, Ydash)
+# plt = visualise(ϕ, X, Y, "after"); display(plt)
 
 
