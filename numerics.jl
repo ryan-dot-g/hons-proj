@@ -38,7 +38,7 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 Ndisc = 30; # number of discretisation points on s (50)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.01; # time discretisation (0.1)
-tmax = 1e3*dt; # max time (1e3 * dt)
+tmax = 1e2*dt; # max time (1e3 * dt)
 Ω = 1e2; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e1; # not too large number: surface friction (1e1)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
@@ -238,7 +238,7 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 ϕ0test = α_morph*ϕ0temp .+ (1-α_morph)*ϕ0; 
 
 # perturbed from steady-state ICs 
-α_rand = 0.8; # percent to perturb ϕ0 by 
+α_rand = 0.05; # percent to perturb ϕ0 by, i.e. ϕ ∈ [1-α, 1+α] * ϕ0 
 ϕ0rand = ϕ0sc * (1 .+ α_rand .* (2 .* rand(Ndisc) .- 1))
 
 ############ -------------------------------------------------- ############
@@ -313,12 +313,17 @@ end
 # initialise X, Y, ϕ arrays from the various possibilities 
 # shape arrays first
 X = zeros(Ndisc); Y = zeros(Ndisc); Xdash = zeros(Ndisc); Ydash = zeros(Ndisc);
-X .= X0; Y .= Y0; 
-Xdash .= X0dash; Ydash .= Y0dash;
-ϵ = trStrSq(X, Y, Xdash, Ydash)
+# X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
+X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
+
 # now morphogen array
 ϕ = zeros(Ndisc);
 ϕ .= ϕ0rand;
+# ϕ .= ϕ0test;
+# ϕ .= ϕ0;
+
+# save initial strain squared
+ϵ = trStrSq(X, Y, Xdash, Ydash)
 
 # prepare the animation
 simAnim = Animation();
@@ -375,11 +380,13 @@ end
 ############ -------------------------------------------------- ############
 ############ ---------------- TESTING SHAPE UPDATES ------------------ ############
 ############ -------------------------------------------------- ############
-# X = X0test; Y = Y0test; Xdash = X0testDash; Ydash = Y0testDash
-# ϕ = ϕ0test;
+# X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
+
+# X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
+# ϕ .= ϕ0rand;
 
 # plt = visualise(ϕ, X, Y, "before"); display(plt);
-# UpdateShape!(ϕ, X, Y, Xdash, Ydash)
+# res = UpdateShape!(ϕ, X, Y, Xdash, Ydash)
 # plt = visualise(ϕ, X, Y, "after"); display(plt)
 
 
