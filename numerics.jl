@@ -1,10 +1,13 @@
 ### TODO 
-# get surface friction working better: could pin the base (current job), or penalise movement
-# restore OG parameters if it still works (long term)
-# relax convergence requirements (tried but could try harder)
-# add a warning for if optim fails
+# SHORT TERM:
+# 
+# LONG TERM:
+# - Get surface friction working better: could pin the base (current fix), or penalise movement
+# - Restore OG parameters used by Dmar
+# - Relax convergence requirements to speed shape up (tried loosely but could try harder)
 
-using LinearAlgebra, DifferentialEquations, Plots, LaTeXStrings;
+
+using LinearAlgebra, DifferentialEquations, Plots, LaTeXStrings, Logging;
 using Optim, ForwardDiff;
 println("running...");
 
@@ -12,6 +15,7 @@ println("running...");
 ############ ---------------- FILE HANDLING ------------------- ############
 ############ -------------------------------------------------- ############
 gitFP = "C:/Users/rgray/OneDrive/ryan/Uni/HONOURS/hons-proj";
+simFP = "C:/Users/rgray/OneDrive/ryan/Uni/HONOURS/hons-proj/vids"
 
 ############ -------------------------------------------------- ############
 ############ ------------- PHYSICAL PARAMETERS ---------------- ############
@@ -23,7 +27,7 @@ h = 1.0 # bilayer thickness (20). NOTE: this interacts with Ω
 b = 1.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
 κ = 1.0; # TODO morphogen stress upregulation coefficient (1 for now)
 ζ = 0.2; # morphogen decay rate (0.2)
-D = 5.0; # morphogen diffusion coefficient (0.01)
+D = 0.01; # morphogen diffusion coefficient (0.01) (5.0 for testing)
 
 E(ϕ) = E0 * h * exp(-b*ϕ); # elasticity function
 f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function 
@@ -33,8 +37,8 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 ############ -------------------------------------------------- ############
 Ndisc = 30; # number of discretisation points on s (50)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
-dt = 0.3; # time discretisation (0.1)
-tmax = 10*dt; # max time (1e3 * dt)
+dt = 0.01; # time discretisation (0.1)
+tmax = 1e3*dt; # max time (1e3 * dt)
 Ω = 1e2; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e1; # not too large number: surface friction (1e1)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
@@ -42,7 +46,7 @@ dsint = 0.01; # small number: distance inside the s grid to start at to avoid di
 ############ -------------------------------------------------- ############
 ############ ----------- VISUALISATION PARAMETERS ------------- ############
 ############ -------------------------------------------------- ############
-plotRes = Inf; # how many timesteps per plot
+plotRes = 10; # how many timesteps per plot (Inf for just 1st and last plots)
 cmap = cgrad(:viridis); # colormap for morphogen concentration 
 
 ############ -------------------------------------------------- ############
@@ -177,11 +181,11 @@ function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     # takes the current state data (shape and morphogen concentration), and updates X, Y 
     # and derivatives IN PLACE, by minimising the energy functional 
     # returns results of the optim
-    result = optimize(x -> EFwrapped(x, ϕ), 
-                    [X; Y], method = LBFGS(), 
-                    autodiff = :forward, iterations = 100000);
-    fullX = result.minimizer;
-    X .= fullX[1:Ndisc]; Y .= fullX[Ndisc+1:end];
+    # result = optimize(x -> EFwrapped(x, ϕ), 
+    #                 [X; Y], method = LBFGS(), 
+    #                 autodiff = :forward, iterations = 100000);
+    # fullX = result.minimizer;
+    # X .= fullX[1:Ndisc]; Y .= fullX[Ndisc+1:end];
     # finally, update derivatives 
     Xdash .= P*X; Ydash .= P*Y;
     return result;
@@ -229,9 +233,13 @@ X0testDash = α_shape*x0tempDash.(Si) + (1-α_shape)*X0dash; Y0testDash = α*y0t
 Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 
 # non-uniform but obeys BCs
-α_morph = 0.6; # weight again 
+α_morph = 1.0; # weight again 
 ϕ0temp = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
 ϕ0test = α_morph*ϕ0temp .+ (1-α_morph)*ϕ0; 
+
+# perturbed from steady-state ICs 
+α_rand = 0.8; # percent to perturb ϕ0 by 
+ϕ0rand = ϕ0sc * (1 .+ α_rand .* (2 .* rand(Ndisc) .- 1))
 
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
@@ -308,12 +316,16 @@ X = zeros(Ndisc); Y = zeros(Ndisc); Xdash = zeros(Ndisc); Ydash = zeros(Ndisc);
 X .= X0; Y .= Y0; 
 Xdash .= X0dash; Ydash .= Y0dash;
 ϵ = trStrSq(X, Y, Xdash, Ydash)
-
 # now morphogen array
 ϕ = zeros(Ndisc);
-ϕ .= ϕ0test;
+ϕ .= ϕ0rand;
 
-runsim = false 
+# prepare the animation
+simAnim = Animation();
+simName = "temp"; # "temp"
+runAnim = true;
+
+runsim = true 
 if runsim
     global ϵ; 
     SaveData!(0, ϕ, X, Y, Xdash, Ydash, ϵ,
@@ -323,13 +335,13 @@ if runsim
         t = Tn[n];
 
         # Step A1: update shape of X(s), Y(s) and derivatives 
-        UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
+        shapeRes = UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
 
         # Step A2: compute new strain tensor squared 
         ϵ = trStrSq(X, Y, Xdash, Ydash); 
 
         # Step A3: evolve morphogen
-        UpdateMorphogen!(ϕ, X, Y, ϵ);
+        morphRes = UpdateMorphogen!(ϕ, X, Y, ϵ);
 
         # Step C1: save necessary data 
         SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵ,
@@ -339,10 +351,21 @@ if runsim
         if mod(n-1, plotRes) == 0 || n == Ntimes-1
             tstr = round(t, digits = 1); 
             pltAnim = visualise(ϕ, X, Y, "t = $tstr");
-            display(pltAnim);
+            runAnim ? frame(simAnim, pltAnim) : nothing
+            # display(pltAnim);
+        end
+
+        # Step D: raise a warning if either of the updates failed.
+        if !Optim.converged(shapeRes)
+            @warn "Shape update failed to converge" n = n convDetails = shapeRes
+        end
+        if !Optim.converged(morphRes)
+            @warn "Morphogen update failed to converge" n = n convDetails = morphRes
         end
     end
 
+    # save and plot relevant objects
+    mp4(simAnim, simFP * "/sim_$simName.mp4", fps = 10);
     plt = plot(Tn, ϕtot, title = "Morphogen vs time", xlabel = "t", ylabel = "Total morphogen",
                 label = L"\varphi");
     display(plt); 
@@ -352,8 +375,8 @@ end
 ############ -------------------------------------------------- ############
 ############ ---------------- TESTING SHAPE UPDATES ------------------ ############
 ############ -------------------------------------------------- ############
-X = X0test; Y = Y0test; Xdash = X0testDash; Ydash = Y0testDash
-ϕ = ϕ0test;
+# X = X0test; Y = Y0test; Xdash = X0testDash; Ydash = Y0testDash
+# ϕ = ϕ0test;
 
 # plt = visualise(ϕ, X, Y, "before"); display(plt);
 # UpdateShape!(ϕ, X, Y, Xdash, Ydash)
