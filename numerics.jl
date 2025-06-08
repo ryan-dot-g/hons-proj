@@ -1,8 +1,9 @@
 ### TODO 
-# get shape updates working with non-uniform morphogen DONE 
-# get surface friction working better: could pin the base, or penalise movement
+# get surface friction working better: could pin the base (current job), or penalise movement
 # rewrite morphogen with Optim instead of jump etc.????
-# restore OG parameters if it still works
+# restore OG parameters if it still works (long term)
+# relax convergence requirements (tried but could try harder)
+# add a warning for if optim fails
 
 using LinearAlgebra, DifferentialEquations, Plots, LaTeXStrings;
 using Optim, ForwardDiff, HiGHS, JuMP, Ipopt;
@@ -176,7 +177,11 @@ end
 function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     # takes the current state data (shape and morphogen concentration), and updates X, Y 
     # and derivatives IN PLACE, by minimising the energy functional 
-
+    result = optimize(x -> EFwrapped(x, ϕ), 
+                    [X; Y], method = LBFGS(), 
+                    autodiff = :forward, iterations = 100000);
+    fullX = result.minimizer;
+    X .= fullX[1:Ndisc]; Y .= fullX[Ndisc+1:end];
     # finally, update derivatives 
     Xdash .= P*X; Ydash .= P*Y;
 end;
@@ -223,15 +228,15 @@ y0tempDash(s) = r * cos(s);
 
 # so that the guess isn't too far off the actual soln, construct the test as a weighted sum of 
 # the correct IC and the 'interesting' IC, then adjust for correct volume
-α = 0.2; # weight in the 'interesting' initial condition
-X0test = α*x0temp.(Si) + (1-α)*X0; Y0test = α*y0temp.(Si) + (1-α)*Y0;
-X0testDash = α*x0tempDash.(Si) + (1-α)*X0dash; Y0testDash = α*y0tempDash.(Si) + (1-α)*Y0dash;
+α_shape = 0.2; # weight in the 'interesting' initial condition
+X0test = α_shape*x0temp.(Si) + (1-α_shape)*X0; Y0test = α*y0temp.(Si) + (1-α)*Y0;
+X0testDash = α_shape*x0tempDash.(Si) + (1-α_shape)*X0dash; Y0testDash = α*y0tempDash.(Si) + (1-α)*Y0dash;
 Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 
 # non-uniform but obeys BCs
-α2 = 0.2; # weight again 
+α_morph = 0.6; # weight again 
 ϕ0temp = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
-ϕ0test = α2*ϕ0temp .+ (1-α2)*ϕ0; 
+ϕ0test = α_morph*ϕ0temp .+ (1-α_morph)*ϕ0; 
 
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
@@ -247,8 +252,8 @@ function visualise(ϕ, X, Y, titleTxt = false)
     plot!(-X, Y, line_z = ϕ, lw = 3, c = cmap, label = "")
 
     # Plot material points 
-    scatter!(X, Y, ms = 1.5, color = :black, label = "")
-    scatter!(-X, Y, ms = 1.5, color = :black, label = "")
+    scatter!(X, Y, ms = 2.0, color = :black, label = "")
+    scatter!(-X, Y, ms = 2.0, color = :black, label = "")
 
     # plot initial shape 
     plot!(X0, Y0, lw = 1, color = :grey, ls = :dash, label = "Initial shape"); 
@@ -352,14 +357,12 @@ end
 ############ -------------------------------------------------- ############
 ############ ---------------- TESTING SHAPE UPDATES ------------------ ############
 ############ -------------------------------------------------- ############
-plt = visualise(ϕ0test, X0test, Y0test, "before"); display(plt);
+X = X0test; Y = Y0test; Xdash = X0testDash; Ydash = Y0testDash
+ϕ = ϕ0test;
 
-result = optimize(x -> EFwrapped(x, ϕ0test), 
-                    [X0test; Y0test], method = LBFGS(), 
-                    autodiff = :forward, iterations = 100000);
-fullX = result.minimizer;
-X = fullX[1:Ndisc]; Y = fullX[Ndisc+1:end];
+plt = visualise(ϕ, X, Y, "before"); display(plt);
+UpdateShape!(ϕ, X, Y, Xdash, Ydash)
 
-plt = visualise(ϕ0test, X, Y, "after"); display(plt)
+plt = visualise(ϕ, X, Y, "after"); display(plt)
 
 
