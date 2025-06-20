@@ -7,7 +7,7 @@
 # - Relax convergence requirements to speed shape up (tried loosely but could try harder)
 
 
-using LinearAlgebra, DifferentialEquations, Plots, LaTeXStrings, Logging;
+using LinearAlgebra, DifferentialEquations, Plots, LaTeXStrings;
 using Optim, ForwardDiff;
 println("running...");
 
@@ -27,7 +27,10 @@ h = 1.0 # bilayer thickness (20). NOTE: this interacts with Ω
 b = 1.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
 κ = 1.0; # TODO morphogen stress upregulation coefficient (1 for now)
 ζ = 0.2; # morphogen decay rate (0.2)
-D = 0.01; # morphogen diffusion coefficient (0.01) (5.0 for testing)
+D = 0.1; # morphogen diffusion coefficient (0.01) (5.0 for testing)
+
+# PARAM SETS OF NOTE: 
+# - (A) 
 
 E(ϕ) = E0 * h * exp(-b*ϕ); # elasticity function
 f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function 
@@ -38,7 +41,7 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 Ndisc = 30; # number of discretisation points on s (50)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.01; # time discretisation (0.1)
-tmax = 1e2*dt; # max time (1e3 * dt)
+tmax = 3e2*dt; # max time (1e3 * dt)
 Ω = 1e2; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e1; # not too large number: surface friction (1e1)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
@@ -46,7 +49,7 @@ dsint = 0.01; # small number: distance inside the s grid to start at to avoid di
 ############ -------------------------------------------------- ############
 ############ ----------- VISUALISATION PARAMETERS ------------- ############
 ############ -------------------------------------------------- ############
-plotRes = 10; # how many timesteps per plot (Inf for just 1st and last plots)
+plotRes = 1; # how many timesteps per plot (Inf for just 1st and last plots)
 cmap = cgrad(:viridis); # colormap for morphogen concentration 
 
 ############ -------------------------------------------------- ############
@@ -181,11 +184,11 @@ function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     # takes the current state data (shape and morphogen concentration), and updates X, Y 
     # and derivatives IN PLACE, by minimising the energy functional 
     # returns results of the optim
-    # result = optimize(x -> EFwrapped(x, ϕ), 
-    #                 [X; Y], method = LBFGS(), 
-    #                 autodiff = :forward, iterations = 100000);
-    # fullX = result.minimizer;
-    # X .= fullX[1:Ndisc]; Y .= fullX[Ndisc+1:end];
+    result = optimize(x -> EFwrapped(x, ϕ), 
+                    [X; Y], method = LBFGS(), 
+                    autodiff = :forward, iterations = 100000);
+    fullX = result.minimizer;
+    X .= fullX[1:Ndisc]; Y .= fullX[Ndisc+1:end];
     # finally, update derivatives 
     Xdash .= P*X; Ydash .= P*Y;
     return result;
@@ -227,19 +230,23 @@ y0tempDash(s) = r * cos(s);
 
 # so that the guess isn't too far off the actual soln, construct the test as a weighted sum of 
 # the correct IC and the 'interesting' IC, then adjust for correct volume
-α_shape = 0.2; # weight in the 'interesting' initial condition
-X0test = α_shape*x0temp.(Si) + (1-α_shape)*X0; Y0test = α*y0temp.(Si) + (1-α)*Y0;
-X0testDash = α_shape*x0tempDash.(Si) + (1-α_shape)*X0dash; Y0testDash = α*y0tempDash.(Si) + (1-α)*Y0dash;
+α_shape = 0.2; # weight in the 'interesting' initial condition (0.2)
+X0test = α_shape*x0temp.(Si) + (1-α_shape)*X0; Y0test = α_shape*y0temp.(Si) + (1-α_shape)*Y0;
+X0testDash = α_shape*x0tempDash.(Si) + (1-α_shape)*X0dash; Y0testDash = α_shape*y0tempDash.(Si) + (1-α_shape)*Y0dash;
 Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 
 # non-uniform but obeys BCs
-α_morph = 1.0; # weight again 
+α_morph = 0.3; # weight again (0.3)
 ϕ0temp = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
 ϕ0test = α_morph*ϕ0temp .+ (1-α_morph)*ϕ0; 
 
 # perturbed from steady-state ICs 
-α_rand = 0.05; # percent to perturb ϕ0 by, i.e. ϕ ∈ [1-α, 1+α] * ϕ0 
-ϕ0rand = ϕ0sc * (1 .+ α_rand .* (2 .* rand(Ndisc) .- 1))
+α_rand = 0.01; # percent to perturb ϕ0 by, i.e. ϕ ∈ [1-α, 1+α] * ϕ0 
+ϕ0rand = ϕ0sc * (1 .+ α_rand .* (2 .* rand(Ndisc) .- 1));
+
+# step-function-like perturb 
+α_step = 0.01 # size of the bump
+ϕ0step = ϕ0sc * (1 .+ α_step .* (4*Ndisc÷9 .< 1:Ndisc .< 5*Ndisc/9))
 
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
@@ -313,14 +320,15 @@ end
 # initialise X, Y, ϕ arrays from the various possibilities 
 # shape arrays first
 X = zeros(Ndisc); Y = zeros(Ndisc); Xdash = zeros(Ndisc); Ydash = zeros(Ndisc);
-# X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
-X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
+X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
+# X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
 
 # now morphogen array
 ϕ = zeros(Ndisc);
-ϕ .= ϕ0rand;
+ϕ .= ϕ0step;
+# ϕ .= ϕ0rand;
 # ϕ .= ϕ0test;
-# ϕ .= ϕ0;
+# ϕ .= ϕ0; 
 
 # save initial strain squared
 ϵ = trStrSq(X, Y, Xdash, Ydash)
@@ -330,7 +338,8 @@ simAnim = Animation();
 simName = "temp"; # "temp"
 runAnim = true;
 
-runsim = true 
+runsim = true;
+tstart = time();
 if runsim
     global ϵ; 
     SaveData!(0, ϕ, X, Y, Xdash, Ydash, ϵ,
@@ -362,12 +371,15 @@ if runsim
 
         # Step D: raise a warning if either of the updates failed.
         if !Optim.converged(shapeRes)
-            @warn "Shape update failed to converge" n = n convDetails = shapeRes
+            println("Shape update failed to converge: Step $n \n $shapeRes")
         end
         if !Optim.converged(morphRes)
-            @warn "Morphogen update failed to converge" n = n convDetails = morphRes
+            println("Morphogen update failed to converge: Step $n \n $morphRes")
         end
     end
+
+    # output finish data 
+    println("Total animation time: $(round(time() - tstart)) seconds for $Ntimes timesteps.")
 
     # save and plot relevant objects
     mp4(simAnim, simFP * "/sim_$simName.mp4", fps = 10);
@@ -381,10 +393,8 @@ end
 ############ ---------------- TESTING SHAPE UPDATES ------------------ ############
 ############ -------------------------------------------------- ############
 # X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
-
 # X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
-# ϕ .= ϕ0rand;
-
+# ϕ .= ϕ0step;
 # plt = visualise(ϕ, X, Y, "before"); display(plt);
 # res = UpdateShape!(ϕ, X, Y, Xdash, Ydash)
 # plt = visualise(ϕ, X, Y, "after"); display(plt)
