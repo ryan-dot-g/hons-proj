@@ -3,9 +3,7 @@
 # 
 # LONG TERM:
 # - Get surface friction working better: could pin the base (current fix), or penalise movement
-# - Restore OG parameters used by Dmar
 # - Relax convergence requirements to speed shape up (tried loosely but could try harder)
-
 
 using LinearAlgebra, DifferentialEquations, Plots, LaTeXStrings;
 using Optim, ForwardDiff;
@@ -20,14 +18,15 @@ simFP = "C:/Users/rgray/OneDrive/ryan/Uni/HONOURS/hons-proj/vids"
 ############ -------------------------------------------------- ############
 ############ ------------- PHYSICAL PARAMETERS ---------------- ############
 ############ -------------------------------------------------- ############
-R = 80; # radius of force-free reference sphere (80)
-r = 120; # radius of initial condition sphere (120 for now) 
-E0 = 50.0; # base Young's modulus (440). NOTE: this interacts with Ω
-h = 1.0 # bilayer thickness (20). NOTE: this interacts with Ω
-b = 1.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
+# Length units in μm, time units in hr 
+R0 = 130; # radius of force-free reference sphere (130)
+r = 160; # radius of initial condition sphere (160 for now) 
+E0 = 440.0; # base Young's modulus (440). NOTE: this interacts with Ω
+h = 20.0 # bilayer thickness (20). NOTE: this interacts with Ω
+b = 5.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
 κ = 1.0; # TODO morphogen stress upregulation coefficient (1 for now)
 ζ = 0.2; # morphogen decay rate (0.2)
-D = 0.1; # morphogen diffusion coefficient (0.01) (5.0 for testing)
+D = 0.01 * 1e6; # morphogen diffusion coefficient (0.01*1e6, in μ m^2)
 
 # PARAM SETS OF NOTE: 
 # - (A) 
@@ -83,12 +82,12 @@ integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
 ############ ------------- PRESAVING CALCULATIONS ------------- ############
 ############ -------------------------------------------------- ############
 CosS = cos.(Si); SinS = sin.(Si); # presaving trigs 
-volEl = R^2 * CosS; # volume element
+volEl = R0^2 * CosS; # volume element
 
 ############ -------------------------------------------------- ############
 ############ -------- STEADY-STATE / INITIAL FUNCTIONS -------- ############
 ############ -------------------------------------------------- ############
-ϵ0sc = 0.5 * ((r^2 - R^2)/R^2)^2; # scalar initial (constant) trace of strain tensor squared
+ϵ0sc = 0.5 * ((r^2 - R0^2)/R0^2)^2; # scalar initial (constant) trace of strain tensor squared
 ϵ0 = zeros(Ndisc) .+ ϵ0sc; # over s-grid
 V0 = 4/3 * r^3; # initial volume, normalised by pi
 
@@ -97,7 +96,7 @@ V0 = 4/3 * r^3; # initial volume, normalised by pi
 
 X0 = r * CosS; Y0 = r * SinS; # initial condition shape 
 X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives 
-Xundef = R * CosS; Yundef = R * SinS; # undeformed shape
+Xundef = R0 * CosS; Yundef = R0 * SinS; # undeformed shape
 
 ############ -------------------------------------------------- ############
 ############ ------------ FUNCTIONALS AND QTYs --------------- ############
@@ -105,7 +104,7 @@ Xundef = R * CosS; Yundef = R * SinS; # undeformed shape
 function trStrSq(X, Y, Xdash, Ydash)
     # takes vectors of the surface parameterisation x(s), y(s) and derivatives w.r.t. s
     # returns a vector containing the trace of the square of the strain tensor at each s
-    t1 = (Xdash).^2 .+ (Ydash).^2 .- R^2;
+    t1 = (Xdash).^2 .+ (Ydash).^2 .- R0^2;
     t2 = t1 * 0; 
     # handle boundary different if s coords go all the way to the boundary 
     if Si[1] == -π/2
@@ -114,9 +113,9 @@ function trStrSq(X, Y, Xdash, Ydash)
     else
         t2 = X.^2 ./ CosS.^2;
     end
-    t2 = t2 .- R^2; 
+    t2 = t2 .- R0^2; 
 
-    return 1/(4*R^4) * (t1.^2 .+ t2.^2); 
+    return 1/(4*R0^4) * (t1.^2 .+ t2.^2); 
 end
 
 function ElEn(ϕ, X, Y, Xdash, Ydash)
@@ -245,7 +244,7 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 ϕ0rand = ϕ0sc * (1 .+ α_rand .* (2 .* rand(Ndisc) .- 1));
 
 # step-function-like perturb 
-α_step = 0.01 # size of the bump
+α_step = 0.04 # size of the bump 
 ϕ0step = ϕ0sc * (1 .+ α_step .* (4*Ndisc÷9 .< 1:Ndisc .< 5*Ndisc/9))
 
 ############ -------------------------------------------------- ############
@@ -270,10 +269,10 @@ function visualise(ϕ, X, Y, titleTxt = false)
     plot!(-X0, Y0, lw = 1, color = :grey, ls = :dash, label = "");
 
     # dummy bit to get a good color scale 
-    if ϕ0[1] != Inf
-        plot!([0.0, 0.01], [0.0, 0.01], lw = 0, 
-                line_z = [0.0, 2*ϕ0[1]], c = cmap, label = "");
-    end
+    # if ϕ0[1] != Inf
+    #     plot!([0.0, 0.01], [0.0, 0.01], lw = 0, 
+    #             line_z = [0.0, 2*ϕ0[1]], c = cmap, label = "");
+    # end
 
     # other plot necessities
     xlabel!("x"); ylabel!("y");
@@ -371,10 +370,12 @@ if runsim
 
         # Step D: raise a warning if either of the updates failed.
         if !Optim.converged(shapeRes)
-            println("Shape update failed to converge: Step $n \n $shapeRes")
+            println("$shapeRes \n Shape update failed to converge: Step $n")
+            break
         end
         if !Optim.converged(morphRes)
-            println("Morphogen update failed to converge: Step $n \n $morphRes")
+            println("$morphRes \n Morphogen update failed to converge: Step $n")
+            break
         end
     end
 
@@ -393,9 +394,13 @@ end
 ############ ---------------- TESTING SHAPE UPDATES ------------------ ############
 ############ -------------------------------------------------- ############
 # X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
-# X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
+# # X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 # ϕ .= ϕ0step;
 # plt = visualise(ϕ, X, Y, "before"); display(plt);
+# println("Elastic energy:", ElEn(ϕ, X, Y, Xdash, Ydash))
+# println("Total volume energy", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
+
+
 # res = UpdateShape!(ϕ, X, Y, Xdash, Ydash)
 # plt = visualise(ϕ, X, Y, "after"); display(plt)
 
