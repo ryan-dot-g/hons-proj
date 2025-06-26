@@ -26,7 +26,7 @@ h = 20.0 # bilayer thickness (20). NOTE: this interacts with Ω
 b = 5.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
 κ = 1.0; # TODO morphogen stress upregulation coefficient (1 for now)
 ζ = 0.2; # morphogen decay rate (0.2)
-D = 0.01 * 1e6; # morphogen diffusion coefficient (0.01*1e6, in μ m^2)
+D = 0.01; # morphogen diffusion coefficient (0.01)
 
 # PARAM SETS OF NOTE: 
 # - (A) 
@@ -37,13 +37,15 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 ############ -------------------------------------------------- ############
 ############ ------------- NUMERICAL PARAMETERS --------------- ############
 ############ -------------------------------------------------- ############
-Ndisc = 30; # number of discretisation points on s (50)
+Ndisc = 50; # number of discretisation points on s (50)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
-dt = 0.01; # time discretisation (0.1)
-tmax = 3e2*dt; # max time (1e3 * dt)
+dt = 0.05; # time discretisation (0.02)
+tmax = 6e1*dt; # max time (2e2 * dt)
 Ω = 1e2; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e1; # not too large number: surface friction (1e1)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
+
+# was 0.05 for dt
 
 ############ -------------------------------------------------- ############
 ############ ----------- VISUALISATION PARAMETERS ------------- ############
@@ -71,8 +73,13 @@ interior = 2:Ndisc-1; # index set for the interior of the array
 # first deriv 
 P = Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)); # main section 
 P = Matrix(P); # convert out of sparse to modify elements 
-P[1, 1] = -3; P[1, 2] = 4; P[1, 3] = -1; # forward diff top row 
+
+P[1, 1] = -3; P[1, 2] = 4; P[1, 3] = -1; # forward diff top row 3rd order
 P[Ndisc, Ndisc] = 3; P[Ndisc, Ndisc-1] = -4; P[Ndisc, Ndisc-2] = 1; # backward diff bottom row 
+
+# P[1,1:2] = [-1, 1] # testing first-order difference 
+# P[Ndisc, Ndisc-1:Ndisc] = [-1, 1]
+
 P /= (2*ds); # scale 
 
 # integral over total s domain, using trapezoid rule
@@ -245,7 +252,8 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 
 # step-function-like perturb 
 α_step = 0.04 # size of the bump 
-ϕ0step = ϕ0sc * (1 .+ α_step .* (4*Ndisc÷9 .< 1:Ndisc .< 5*Ndisc/9))
+# ϕ0step = ϕ0sc * (1 .+ α_step .* (4*Ndisc÷9 .< 1:Ndisc .< 5*Ndisc/9)); # in the middle, at y = 0
+ϕ0step = ϕ0sc * (1 .+ α_step .* (8*Ndisc÷9 .< 1:Ndisc)); # at the top, at x = 0
 
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
