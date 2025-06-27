@@ -1,6 +1,6 @@
 ### TODO 
 # SHORT TERM:
-# 
+# - number of steps until failure, not total number for time thing
 # LONG TERM:
 # - Get surface friction working better: could pin the base (current fix), or penalise movement
 # - Relax convergence requirements to speed shape up (tried loosely but could try harder)
@@ -37,15 +37,14 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 ############ -------------------------------------------------- ############
 ############ ------------- NUMERICAL PARAMETERS --------------- ############
 ############ -------------------------------------------------- ############
-Ndisc = 50; # number of discretisation points on s (50)
+Ndisc = 40; # number of discretisation points on s (50)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.05; # time discretisation (0.02)
-tmax = 6e1*dt; # max time (2e2 * dt)
+tmax = 1e2*dt; # max time (2e2 * dt)
 Ω = 1e2; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e1; # not too large number: surface friction (1e1)
-dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
-
-# was 0.05 for dt
+# dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
+dsint = (π/Ndisc)/2;
 
 ############ -------------------------------------------------- ############
 ############ ----------- VISUALISATION PARAMETERS ------------- ############
@@ -137,6 +136,13 @@ function VolInt(X, Y, Xdash, Ydash)
     return integrateSdom(fn);
 end
 
+# function VolInt(X, Y, Xdash, Ydash)
+#     # volume itnegral take 2
+#     # normalised by π
+#     fn = X .* (X.*Ydash .- Xdash.*Y)
+#     return 2/3 * integrateSdom(fn);
+# end
+
 function SurfaceFriction(X, Y)
     # number that models friction, as the difference between the COM and zero
     # center of mass in x direction is naturally 0 by symm
@@ -178,8 +184,8 @@ end
 function Renormalise!(X, Y, Xdash, Ydash, V0)
     # takes a shape parameterisation, and modifies in-place to ensure that the volume 
     # remains equal to some V0. 
-    # uses the fact that integral propto x^2 y', so cube root normalisation constant 
-    # to apply equally to x, y, x', y' and ensure volume works
+    # uses the fact that integral propto 3 factors of x, y, x', y', so a cube 
+    # root normalisation constant can apply equally to x,y,x',y' and ensure volume works
     vtemp = VolInt(X, Y, Xdash, Ydash);
     normk = cbrt(V0/vtemp);
     X .= X * normk; Y .= Y * normk; 
@@ -190,15 +196,19 @@ function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     # takes the current state data (shape and morphogen concentration), and updates X, Y 
     # and derivatives IN PLACE, by minimising the energy functional 
     # returns results of the optim
+    lbounds = [dsint * 0.9; Vector(1:Ndisc-2)*-Inf; dsint*0.9; Vector(1:Ndisc)*-Inf ];
+    ubounds = [dsint * 1.1; Vector(1:Ndisc-2)*Inf; dsint*1.1; Vector(1:Ndisc)*Inf];
     result = optimize(x -> EFwrapped(x, ϕ), 
-                    [X; Y], method = LBFGS(), 
+                    [X; Y], 
+                    # lbounds, ubounds, Fminbox(GradientDescent()),
+                    method = LBFGS(), 
                     autodiff = :forward, iterations = 100000);
     fullX = result.minimizer;
     X .= fullX[1:Ndisc]; Y .= fullX[Ndisc+1:end];
     # finally, update derivatives 
     Xdash .= P*X; Ydash .= P*Y;
     return result;
-end;
+end; 
 
 function UpdateMorphogen!(ϕ, X, Y, ϵ)
     # takes the current state data, and updates the morphogen concentration 
@@ -242,7 +252,7 @@ X0testDash = α_shape*x0tempDash.(Si) + (1-α_shape)*X0dash; Y0testDash = α_sha
 Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 
 # non-uniform but obeys BCs
-α_morph = 0.3; # weight again (0.3)
+α_morph = 0.15; # weight again (0.3)
 ϕ0temp = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
 ϕ0test = α_morph*ϕ0temp .+ (1-α_morph)*ϕ0; 
 
@@ -251,7 +261,7 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 ϕ0rand = ϕ0sc * (1 .+ α_rand .* (2 .* rand(Ndisc) .- 1));
 
 # step-function-like perturb 
-α_step = 0.04 # size of the bump 
+α_step = 0.5 # size of the bump (0.04)
 # ϕ0step = ϕ0sc * (1 .+ α_step .* (4*Ndisc÷9 .< 1:Ndisc .< 5*Ndisc/9)); # in the middle, at y = 0
 ϕ0step = ϕ0sc * (1 .+ α_step .* (8*Ndisc÷9 .< 1:Ndisc)); # at the top, at x = 0
 
@@ -332,9 +342,9 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 
 # now morphogen array
 ϕ = zeros(Ndisc);
-ϕ .= ϕ0step;
+# ϕ .= ϕ0step;
 # ϕ .= ϕ0rand;
-# ϕ .= ϕ0test;
+ϕ .= ϕ0test;
 # ϕ .= ϕ0; 
 
 # save initial strain squared
@@ -402,12 +412,11 @@ end
 ############ ---------------- TESTING SHAPE UPDATES ------------------ ############
 ############ -------------------------------------------------- ############
 # X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
-# # X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
-# ϕ .= ϕ0step;
+# X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
+# ϕ .= ϕ0test;
 # plt = visualise(ϕ, X, Y, "before"); display(plt);
 # println("Elastic energy:", ElEn(ϕ, X, Y, Xdash, Ydash))
 # println("Total volume energy", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
-
 
 # res = UpdateShape!(ϕ, X, Y, Xdash, Ydash)
 # plt = visualise(ϕ, X, Y, "after"); display(plt)
