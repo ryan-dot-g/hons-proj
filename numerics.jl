@@ -107,6 +107,7 @@ V0 = 4/3 * r^3; # initial volume, normalised by pi
 X0 = r * CosS; Y0 = r * SinS; # initial condition shape 
 X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives 
 Xundef = R0 * CosS; Yundef = R0 * SinS; # undeformed shape
+rXu =  X0 ./ r; rYu =  Y0 ./ r; # radial unit vectors
 
 ############ -------------------------------------------------- ############
 ############ ------------ FUNCTIONALS AND QTYs --------------- ############
@@ -170,11 +171,11 @@ function EFwrapped(fullData, ϕ)
     return EnergyFunctional(ϕ, X, Y, Xdash, Ydash);
 end
 
-function MorphogenFunctional(ϕ, ϕn, X, Y, ϵ)
+function MorphogenFunctional(ϕ, ϕn, X, Y, ϵsq)
     # total energy for the morphogen equation 
     # ϕn is the previous state 
     integrand1 = (ϕ .- ϕn).^2 /(2*dt) .* volEl; # time-deriv bit
-    integrand2 = -f.(ϵ) .* ϕ .* volEl; # morphogen production bit
+    integrand2 = -f.(ϵsq) .* ϕ .* volEl; # morphogen production bit
     integrand3 = ζ * (ϕ).^2 /2 .* volEl; # disassociation bit
     integrand4 = D * (P*ϕ).^2 /2 .* CosS; # diffusion bit, volEl already incorporated
     
@@ -214,25 +215,25 @@ function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     return result;
 end; 
 
-function UpdateMorphogen!(ϕ, X, Y, ϵ)
+function UpdateMorphogen!(ϕ, X, Y, ϵsq)
     # takes the current state data, and updates the morphogen concentration 
     # IN PLACE, by performing an implicit update step 
     ϕn = ϕ; # previous value of morphogen 
-    result = optimize(ϕ -> MorphogenFunctional(ϕ, ϕn, X, Y, ϵ), 
+    result = optimize(ϕ -> MorphogenFunctional(ϕ, ϕn, X, Y, ϵsq), 
                     ϕn, method = LBFGS(), 
                     autodiff = :forward, iterations = 1000); 
     ϕ .= result.minimizer;
     return result; 
 end
 
-function SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵ,
+function SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵsq,
                     ϕtot, ϵtot)
     # Saves data relevant to the current state IN PLACE. Takes state data,
     #   and relevant data vecs to save into
     # ϕtot: total morphogen present in the organism
     # ϵtot: total strain
     ϕtot[n+1] = integrateSdom(ϕ); 
-    ϵtot[n+1] = integrateSdom(ϵ);
+    ϵtot[n+1] = integrateSdom(ϵsq);
 end
 
 ############ -------------------------------------------------- ############
@@ -270,7 +271,7 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
 ############ -------------------------------------------------- ############
-function visualise(ϕ, X, Y, titleTxt = false)
+function visShape(ϕ, X, Y, titleTxt = false)
     # takes a surface discretised parameterisation and morphogen concentration
     # displays a plot of the deformed hydra, colored by the morphogen concentration 
     # optionally adds a provided title 
@@ -304,6 +305,81 @@ function visualise(ϕ, X, Y, titleTxt = false)
         title!(titleTxt)
     end
 
+    return plt;
+end
+
+function visDeform(ϕ, X, Y)
+    # takes a surface discretised parameterisation and morphogen concentration
+    # displays a plot of just the deformation, i.e. the difference between main shape and IC
+
+    ΔX = X .- X0; ΔY = Y .- Y0; # compute deformation
+
+    # Plot deformation, colored by morphogen concentration 
+    plt = plot(ΔX, ΔY, line_z = ϕ, lw = 4, alpha = 0.7,
+                c = cmap, label = "Hydra deformation", 
+                legend = :bottomright);
+    plot!(-ΔX, ΔY, line_z = ϕ, lw = 4, alpha = 0.7,
+                c = cmap, label = "")
+
+    # Plot material points 
+    scatter!(ΔX, ΔY, ms = 2.0, color = :black, label = "")
+    scatter!(-ΔX, ΔY, ms = 2.0, color = :black, label = "")
+
+    # other plot necessities
+    xlabel!("x"); ylabel!("y");
+    # lm = 0.1 * r; xlims!(-lm, lm); ylims!(-lm, lm);
+
+    return plt;
+end
+
+function visRdef(ϕ, X, Y)
+    # plots deformation in radial direction against s, returning plot object
+
+    # first, calculate Δr 
+    ΔX = X .- X0; ΔY = Y .- Y0; # compute deformation
+    Δr = ΔX .* rXu .+ ΔY .* rYu; # dot-product to get scalar radial deflection
+
+    # then, plot dr against S 
+    plt = plot(Si, Δr, label = L"\Delta r", lw = 2, line_z = ϕ, c = cmap,
+                xlabel = "s", ylabel = "r", legend = :topright, colorbar = false,
+                legendfontsize = 14);
+    return plt;
+end
+
+function visQtys(ϕ, ϵsq)
+    # plots morphogen and strain against S, returning plot object 
+    plt = plot(Si, ϕ, label = L"\varphi", lw = 1.5, line_z = ϕ, c = cmap, ls = :dot, 
+                xlabel = "s", ylabel = "Morphogen", legend = :topright, colorbar = false,
+                legendfontsize = 14);
+    plot!(twinx(), Si, ϵsq, label = L"\epsilon^2", lw = 2, line_z = ϕ, c = cmap,
+            ylabel = "Strain", legend = :right, colorbar = false,
+            legendfontsize = 14)
+    return plt;
+end
+
+function visualise(ϕ, X, Y, ϵsq, titleTxt = false)
+    # wrapper visualisation function to display all relevant plots at once 
+    pltA = visShape(ϕ, X, Y); 
+    pltB = visRdef(ϕ, X, Y);
+    pltC = visDeform(ϕ, X, Y);
+    pltD = visQtys(ϕ, ϵsq);
+    combined = plot(pltA, pltB, pltC, pltD, layout = (2,2), size=(800,600)); 
+    if titleTxt isa String
+        title!(titleTxt)
+    end
+    return combined;
+end
+
+function postPlot(Tn, ϕtot, ϵtot, Ncutoff)
+    # plots on the same plot, the total morphogen and total strain 
+    # returns the plot object 
+    plt = plot(Tn[1:Ncutoff], ϕtot[1:Ncutoff], label = L"\varphi", 
+                color = :blue, lw = 2,
+                title = "Hydra dynamics", xlabel = "t", ylabel = "Total morphogen",
+                legend = :topleft);
+    plot!(twinx(), Tn[1:Ncutoff], ϵtot[1:Ncutoff], label = L"\epsilon^2", 
+            color = :red, lw = 2,
+            ylabel = "Total strain", legend = :left)
     return plt;
 end
 
@@ -349,18 +425,19 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 # ϕ .= ϕ0; 
 
 # save initial strain squared
-ϵ = trStrSq(X, Y, Xdash, Ydash)
+ϵsq = trStrSq(X, Y, Xdash, Ydash)
 
 # prepare the animation
-simAnim = Animation();
+fullAnim = Animation();
+shapeAnim = Animation();
 simName = "temp"; # "temp"
 runAnim = true;
 
 runsim = true;
 tstart = time();
 if runsim
-    global ϵ; 
-    SaveData!(0, ϕ, X, Y, Xdash, Ydash, ϵ,
+    global ϵsq; 
+    SaveData!(0, ϕ, X, Y, Xdash, Ydash, ϵsq,
                     ϕtot, ϵtot)
 
     for n = 1:Ntimes-1
@@ -370,22 +447,26 @@ if runsim
         shapeRes = UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
 
         # Step A2: compute new strain tensor squared 
-        ϵ = trStrSq(X, Y, Xdash, Ydash); 
+        ϵsq = trStrSq(X, Y, Xdash, Ydash); 
 
         # Step A3: evolve morphogen
-        morphRes = UpdateMorphogen!(ϕ, X, Y, ϵ);
+        morphRes = UpdateMorphogen!(ϕ, X, Y, ϵsq);
 
         # Step C1: save necessary data 
-        SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵ,
+        SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵsq,
                     ϕtot, ϵtot)
 
-        # Step C2: visualise if necessary, always visualising first and last 
-        if mod(n-1, plotRes) == 0 || n == Ntimes-1
-            tstr = round(t, digits = 2); 
-            pltAnim = visualise(ϕ, X, Y, "t = $tstr");
-            runAnim ? frame(simAnim, pltAnim) : nothing
-            # display(pltAnim);
+        # Step C2: visualise 
+        tstr = round(t, digits = 2); 
+        frameFullAnim = visualise(ϕ, X, Y, ϵsq,"t = $tstr");
+        frameShapeAnim = visShape(ϕ, X, Y, "t = $tstr");
+        if runAnim
+            frame(fullAnim, frameFullAnim)
+            frame(shapeAnim, frameShapeAnim) 
         end
+        # if mod(n-1, plotRes) == 0 || n == Ntimes-1 # always visualise first and last 
+            # display(shapeAnim);
+        # end
 
         # Step D: raise a warning if either of the updates failed.
         if !Optim.converged(shapeRes)
@@ -406,10 +487,9 @@ if runsim
     println("Total animation time: $(round(time() - tstart)) seconds for $Ncutoff timesteps.")
 
     # save and plot relevant objects
-    mp4(simAnim, simFP * "/sim_$simName.mp4", fps = 5);
-    plt = plot(Tn[1:Ncutoff], ϕtot[1:Ncutoff], title = "Morphogen vs time", xlabel = "t", ylabel = "Total morphogen",
-                label = L"\varphi");
-    display(plt); 
+    mp4(fullAnim, simFP * "/sim_$simName-full.mp4", fps = 4);
+    mp4(shapeAnim, simFP * "/sim_$simName-shape.mp4", fps = 4);
+    plt = postPlot(Tn, ϕtot, ϵtot, Ncutoff); display(plt); 
 end
 
 
@@ -419,11 +499,12 @@ end
 # X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
 # X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 # ϕ .= ϕ0sideBump;
-# plt = visualise(ϕ, X, Y, "before"); display(plt);
-# println("Elastic energy:", ElEn(ϕ, X, Y, Xdash, Ydash))
+# ϵsq = trStrSq(X, Y, Xdash, Ydash)
+# plt = visualise(ϕ, X, Y, ϵsq,"before"); display(plt)
+# println("Elastic energy:", ϵsq)
 # println("Total volume energy", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
 
 # res = UpdateShape!(ϕ, X, Y, Xdash, Ydash)
-# plt = visualise(ϕ, X, Y, "after"); display(plt)
+# plt = visShape(ϕ, X, Y); display(plt)
 
 
