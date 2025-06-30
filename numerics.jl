@@ -39,12 +39,15 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 ############ -------------------------------------------------- ############
 Ndisc = 40; # number of discretisation points on s (50)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
-dt = 0.05; # time discretisation (0.02)
-tmax = 1e2*dt; # max time (2e2 * dt)
+dt = 0.04; # time discretisation (0.04)
+tmax = 1e2*dt; # max time (2e2 * dt). Sims dont really get here tho
 Ω = 1e2; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e1; # not too large number: surface friction (1e1)
-# dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
-dsint = (π/Ndisc)/2;
+dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
+# dsint = (π/Ndisc)/2;
+
+cfl = 2 * D * dt / (π/Ndisc)^2; # cfl condition for diffusion, checking sensible. ds is approximate 
+# println("CFL number (should be <<1): $(round(cfl, digits = 5))")
 
 ############ -------------------------------------------------- ############
 ############ ----------- VISUALISATION PARAMETERS ------------- ############
@@ -59,6 +62,7 @@ Si = range(smin+dsint, smax-dsint, Ndisc); # grid of s values
 ds = Si[2] - Si[1]; 
 Tn = 0:dt:tmax; # grid of t values 
 Ntimes = length(Tn); 
+Ncutoff = Ntimes; # where the sim ends because it breaks
 interior = 2:Ndisc-1; # index set for the interior of the array
 
 # preparing quantities to be saved. Each qty is saved BEFORE and AFTER sim
@@ -202,7 +206,7 @@ function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
                     [X; Y], 
                     # lbounds, ubounds, Fminbox(GradientDescent()),
                     method = LBFGS(), 
-                    autodiff = :forward, iterations = 100000);
+                    autodiff = :forward, iterations = 15000);  # 100 000
     fullX = result.minimizer;
     X .= fullX[1:Ndisc]; Y .= fullX[Ndisc+1:end];
     # finally, update derivatives 
@@ -216,7 +220,7 @@ function UpdateMorphogen!(ϕ, X, Y, ϵ)
     ϕn = ϕ; # previous value of morphogen 
     result = optimize(ϕ -> MorphogenFunctional(ϕ, ϕn, X, Y, ϵ), 
                     ϕn, method = LBFGS(), 
-                    autodiff = :forward, iterations = 100000);
+                    autodiff = :forward, iterations = 1000); 
     ϕ .= result.minimizer;
     return result; 
 end
@@ -251,19 +255,17 @@ X0test = α_shape*x0temp.(Si) + (1-α_shape)*X0; Y0test = α_shape*y0temp.(Si) +
 X0testDash = α_shape*x0tempDash.(Si) + (1-α_shape)*X0dash; Y0testDash = α_shape*y0tempDash.(Si) + (1-α_shape)*Y0dash;
 Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 
-# non-uniform but obeys BCs
-α_morph = 0.15; # weight again (0.3)
-ϕ0temp = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
-ϕ0test = α_morph*ϕ0temp .+ (1-α_morph)*ϕ0; 
+### --- ϕ ICs --- ###
+# nonuniform but obey BCs
+α_morph = 0.125; # weight of the nonuniform 'interesting' component (0.125)
 
-# perturbed from steady-state ICs 
-α_rand = 0.01; # percent to perturb ϕ0 by, i.e. ϕ ∈ [1-α, 1+α] * ϕ0 
-ϕ0rand = ϕ0sc * (1 .+ α_rand .* (2 .* rand(Ndisc) .- 1));
+# bump on the top of the domain
+ϕ0tempTop = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
+ϕ0topBump = α_morph*ϕ0tempTop .+ (1-α_morph)*ϕ0; 
 
-# step-function-like perturb 
-α_step = 0.5 # size of the bump (0.04)
-# ϕ0step = ϕ0sc * (1 .+ α_step .* (4*Ndisc÷9 .< 1:Ndisc .< 5*Ndisc/9)); # in the middle, at y = 0
-ϕ0step = ϕ0sc * (1 .+ α_step .* (8*Ndisc÷9 .< 1:Ndisc)); # at the top, at x = 0
+# bump on the side of the domain 
+ϕ0tempSide = zeros(Ndisc) .+ 2*exp.(-2 * Si.^2) * ϕ0sc;
+ϕ0sideBump = α_morph*ϕ0tempSide .+ (1-α_morph)*ϕ0; 
 
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
@@ -275,8 +277,11 @@ function visualise(ϕ, X, Y, titleTxt = false)
     # returns the plot object for displaying and saving
 
     # Plot actual deformed shape, colored by morphogen concentration 
-    plt = plot(X, Y, line_z = ϕ, lw = 3, c = cmap, label = "Hydra shape", aspect_ratio = :equal);
-    plot!(-X, Y, line_z = ϕ, lw = 3, c = cmap, label = "")
+    plt = plot(X, Y, line_z = ϕ, lw = 4, alpha = 0.7,
+                c = cmap, label = "Hydra shape", 
+                aspect_ratio = :equal, legend = :bottomright);
+    plot!(-X, Y, line_z = ϕ, lw = 4, alpha = 0.7,
+                c = cmap, label = "")
 
     # Plot material points 
     scatter!(X, Y, ms = 2.0, color = :black, label = "")
@@ -294,16 +299,13 @@ function visualise(ϕ, X, Y, titleTxt = false)
 
     # other plot necessities
     xlabel!("x"); ylabel!("y");
-    lm = 2 * r; xlims!(-lm, lm); ylims!(-lm, lm);
+    lm = 1.33 * r; xlims!(-lm, lm); ylims!(-lm, lm);
     if titleTxt isa String
         title!(titleTxt)
     end
 
     return plt;
 end
-
-# plt = visualise(ϕ0 .* Si, x0quad.(Si), y0quad.(Si));
-# display(plt)
 
 ############ -------------------------------------------------- ############
 ############ --------------- CHECKING FORMULAS ---------------- ############
@@ -342,9 +344,8 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 
 # now morphogen array
 ϕ = zeros(Ndisc);
-# ϕ .= ϕ0step;
-# ϕ .= ϕ0rand;
-ϕ .= ϕ0test;
+ϕ .= ϕ0topBump;
+# ϕ .= ϕ0sideBump;
 # ϕ .= ϕ0; 
 
 # save initial strain squared
@@ -380,7 +381,7 @@ if runsim
 
         # Step C2: visualise if necessary, always visualising first and last 
         if mod(n-1, plotRes) == 0 || n == Ntimes-1
-            tstr = round(t, digits = 1); 
+            tstr = round(t, digits = 2); 
             pltAnim = visualise(ϕ, X, Y, "t = $tstr");
             runAnim ? frame(simAnim, pltAnim) : nothing
             # display(pltAnim);
@@ -389,20 +390,24 @@ if runsim
         # Step D: raise a warning if either of the updates failed.
         if !Optim.converged(shapeRes)
             println("$shapeRes \n Shape update failed to converge: Step $n")
+            global Ncutoff = n;
             break
         end
         if !Optim.converged(morphRes)
             println("$morphRes \n Morphogen update failed to converge: Step $n")
+            global Ncutoff = n;
             break
         end
+
+        println("$n, $(round(time() - tstart)), $(shapeRes.iterations)")
     end
 
     # output finish data 
-    println("Total animation time: $(round(time() - tstart)) seconds for $Ntimes timesteps.")
+    println("Total animation time: $(round(time() - tstart)) seconds for $Ncutoff timesteps.")
 
     # save and plot relevant objects
-    mp4(simAnim, simFP * "/sim_$simName.mp4", fps = 10);
-    plt = plot(Tn, ϕtot, title = "Morphogen vs time", xlabel = "t", ylabel = "Total morphogen",
+    mp4(simAnim, simFP * "/sim_$simName.mp4", fps = 5);
+    plt = plot(Tn[1:Ncutoff], ϕtot[1:Ncutoff], title = "Morphogen vs time", xlabel = "t", ylabel = "Total morphogen",
                 label = L"\varphi");
     display(plt); 
 end
@@ -413,7 +418,7 @@ end
 ############ -------------------------------------------------- ############
 # X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
 # X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
-# ϕ .= ϕ0test;
+# ϕ .= ϕ0sideBump;
 # plt = visualise(ϕ, X, Y, "before"); display(plt);
 # println("Elastic energy:", ElEn(ϕ, X, Y, Xdash, Ydash))
 # println("Total volume energy", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
