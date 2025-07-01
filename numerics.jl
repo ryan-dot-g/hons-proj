@@ -37,10 +37,10 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 ############ -------------------------------------------------- ############
 ############ ------------- NUMERICAL PARAMETERS --------------- ############
 ############ -------------------------------------------------- ############
-Ndisc = 40; # number of discretisation points on s (50)
+Ndisc = 40; # number of discretisation points on s (40)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
-dt = 0.04; # time discretisation (0.04)
-tmax = 1e2*dt; # max time (2e2 * dt). Sims dont really get here tho
+dt = 0.03; # time discretisation (0.04)
+tmax = 1e2*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
 Ω = 1e2; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e1; # not too large number: surface friction (1e1)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
@@ -80,8 +80,8 @@ P = Matrix(P); # convert out of sparse to modify elements
 P[1, 1] = -3; P[1, 2] = 4; P[1, 3] = -1; # forward diff top row 3rd order
 P[Ndisc, Ndisc] = 3; P[Ndisc, Ndisc-1] = -4; P[Ndisc, Ndisc-2] = 1; # backward diff bottom row 
 
-# P[1,1:2] = [-1, 1] # testing first-order difference 
-# P[Ndisc, Ndisc-1:Ndisc] = [-1, 1]
+# P[1,1:2] = 2*[-1, 1] # testing first-order difference 
+# P[Ndisc, Ndisc-1:Ndisc] = 2*[-1, 1]
 
 P /= (2*ds); # scale 
 
@@ -108,6 +108,8 @@ X0 = r * CosS; Y0 = r * SinS; # initial condition shape
 X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives 
 Xundef = R0 * CosS; Yundef = R0 * SinS; # undeformed shape
 rXu =  X0 ./ r; rYu =  Y0 ./ r; # radial unit vectors
+
+ZZ0 = hcat(ϕ0, X0, Y0); # full state vector, as Ndisc * 3 matrix
 
 ############ -------------------------------------------------- ############
 ############ ------------ FUNCTIONALS AND QTYs --------------- ############
@@ -157,10 +159,17 @@ function SurfaceFriction(X, Y)
     return (Y[1] - Y0[1])^2
 end
 
+κ_bend = 1;
+function Bending(X)
+    ΔX = X .- X0;
+    return sum( (P*ΔX).^2 );
+end
+
 function EnergyFunctional(ϕ, X, Y, Xdash, Ydash)
     # total energy functional, including elastic energy and a punishing potential and surface friction
     return ElEn(ϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2 +
-                ω * SurfaceFriction(X, Y);
+                ω * SurfaceFriction(X, Y) +
+                κ_bend * (Bending(X) + Bending(Y));
 end
 
 function EFwrapped(fullData, ϕ)
@@ -235,6 +244,22 @@ function SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵsq,
     ϕtot[n+1] = integrateSdom(ϕ); 
     ϵtot[n+1] = integrateSdom(ϵsq);
 end
+
+############ -------------------------------------------------- ############
+############ --------------- EIGENVECTOR STEPS ---------------- ############
+############ -------------------------------------------------- ############
+function ProjectEvec!(ϕ, X, Y)
+    # renormalises state to allow it to slowly project onto the leading eigenvector 
+    # modifies in place, replacing the existing state with one that has the perturbation normalised
+    ZZ = hcat(ϕ, X, Y) # full state 
+    dZZ = ZZ .- ZZ0; # change in state 
+    dZZmag = dZZ[:,1].^2 .+ (dZZ[:,2]./r).^2 .+ (dZZ[:,3]./r).^2  # length Ndisc; # Δϕ^2 + (ΔX/R)^2 for each s
+    globalNorm = sqrt(integrateSdom(dZZmag .* volEl)); # norm over entire domain
+    # println(globalNorm)
+    dZZ = dZZ / globalNorm; # normalise the perturbation 
+    ZZ = ZZ0 .+ dZZ; # get the full state again 
+    ϕ .= ZZ[:,1]; X .= ZZ[:,2]; Y .= ZZ[:,3]; # save new state 
+end;
 
 ############ -------------------------------------------------- ############
 ############ ------------------ BETTER ICs -------------------- ############
@@ -348,7 +373,7 @@ end
 
 function visQtys(ϕ, ϵsq)
     # plots morphogen and strain against S, returning plot object 
-    plt = plot(Si, ϕ, label = L"\varphi", lw = 1.5, line_z = ϕ, c = cmap, ls = :dot, 
+    plt = plot(Si, ϕ .- ϕ0, label = L"Δ\varphi", lw = 1.5, line_z = ϕ, c = cmap, ls = :dot, 
                 xlabel = "s", ylabel = "Morphogen", legend = :topright, colorbar = false,
                 legendfontsize = 14);
     plot!(twinx(), Si, ϵsq, label = L"\epsilon^2", lw = 2, line_z = ϕ, c = cmap,
@@ -452,6 +477,9 @@ if runsim
         # Step A3: evolve morphogen
         morphRes = UpdateMorphogen!(ϕ, X, Y, ϵsq);
 
+        # Step B1: project onto eigenvector 
+        ProjectEvec!(ϕ, X, Y)
+
         # Step C1: save necessary data 
         SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵsq,
                     ϕtot, ϵtot)
@@ -499,12 +527,13 @@ end
 # X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
 # X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 # ϕ .= ϕ0sideBump;
-# ϵsq = trStrSq(X, Y, Xdash, Ydash)
-# plt = visualise(ϕ, X, Y, ϵsq,"before"); display(plt)
-# println("Elastic energy:", ϵsq)
-# println("Total volume energy", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
+# ϵsqtot = ElEn(ϕ, X, Y, Xdash, Ydash)
+# plt = visShape(ϕ, X, Y,"before"); display(plt)
+# # println("Elastic energy: ", ϵsqtot)
+# # println("Total volume energy: ", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
 
 # res = UpdateShape!(ϕ, X, Y, Xdash, Ydash)
-# plt = visShape(ϕ, X, Y); display(plt)
+# plt = visShape(ϕ, X, Y, "after"); display(plt)
 
-
+# ProjectEvec!(ϕ, X, Y)
+# plt = visShape(ϕ, X, Y, "after proj"); display(plt)
