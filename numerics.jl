@@ -40,9 +40,9 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on s (40)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.04)
-tmax = 1e2*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
+tmax = 40*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
 Ω = 1e2; # not too large number: punishing potential for volume deviation (1e2)
-ω = 1e1; # not too large number: surface friction (1e1)
+ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
 # dsint = (π/Ndisc)/2;
 
@@ -111,6 +111,22 @@ rXu =  X0 ./ r; rYu =  Y0 ./ r; # radial unit vectors
 
 ZZ0 = hcat(ϕ0, X0, Y0); # full state vector, as Ndisc * 3 matrix
 
+## computing initial states as numerical optimisers not analytic optimisers 
+# resultNumShape = optimize(x -> EFwrapped(x, ϕ0), 
+#                     [X0; Y0], 
+#                     # lbounds, ubounds, Fminbox(GradientDescent()),
+#                     method = LBFGS(), 
+#                     autodiff = :forward, iterations = 100000);  # 15000 or 100 000
+# fullXnum = resultNumShape.minimizer;
+# X0num = fullXnum[1:Ndisc]; Y0num = fullXnum[Ndisc+1:end];
+
+# resultNumPhi = optimize(ϕ -> MorphogenFunctional(ϕ, ϕ0, X0num, Y0num, ϵ0), 
+#                     ϕ0, method = LBFGS(), 
+#                     autodiff = :forward, iterations = 1000); 
+# ϕ0num = resultNumPhi.minimizer;
+
+# ZZ0 = hcat(ϕ0num, X0num, Y0num);
+
 ############ -------------------------------------------------- ############
 ############ ------------ FUNCTIONALS AND QTYs --------------- ############
 ############ -------------------------------------------------- ############
@@ -151,25 +167,31 @@ end
 # end
 
 function SurfaceFriction(X, Y)
-    # number that models friction, as the difference between the COM and zero
+    # number that models friction to stop entire hydra running away
+    
+    # Option 1: The difference between the COM and zero
     # center of mass in x direction is naturally 0 by symm
     # return sum(Y)^2;
 
-    # alternatively, pin the base 
-    return (Y[1] - Y0[1])^2
+    # Option 2: Pin the base 
+    # return (Y[1] - Y0[1])^2
+
+    # Option 3: Keep it close to the IC 
+    return sum( (Y .- Y0).^2 + (X .- X0).^2 );
 end
 
-κ_bend = 1;
-function Bending(X)
-    ΔX = X .- X0;
-    return sum( (P*ΔX).^2 );
-end
+# κ_bend = 1;
+# function BendingPenalty(X)
+#     # try to stop bending by minimising derivative 
+#     ΔX = X .- X0;
+#     return sum( (P*ΔX).^2 );
+# end
 
 function EnergyFunctional(ϕ, X, Y, Xdash, Ydash)
     # total energy functional, including elastic energy and a punishing potential and surface friction
     return ElEn(ϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2 +
-                ω * SurfaceFriction(X, Y) +
-                κ_bend * (Bending(X) + Bending(Y));
+                ω * SurfaceFriction(X, Y);
+                # κ_bend * (BendingPenalty(X) + BendingPenalty(Y));
 end
 
 function EFwrapped(fullData, ϕ)
@@ -210,13 +232,16 @@ function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     # takes the current state data (shape and morphogen concentration), and updates X, Y 
     # and derivatives IN PLACE, by minimising the energy functional 
     # returns results of the optim
+
+    # currently no BCs in the optim, but these could be useful if implemented 
     lbounds = [dsint * 0.9; Vector(1:Ndisc-2)*-Inf; dsint*0.9; Vector(1:Ndisc)*-Inf ];
     ubounds = [dsint * 1.1; Vector(1:Ndisc-2)*Inf; dsint*1.1; Vector(1:Ndisc)*Inf];
+    
     result = optimize(x -> EFwrapped(x, ϕ), 
                     [X; Y], 
                     # lbounds, ubounds, Fminbox(GradientDescent()),
                     method = LBFGS(), 
-                    autodiff = :forward, iterations = 15000);  # 100 000
+                    autodiff = :forward, iterations = 15000);  # 15000 or 100 000
     fullX = result.minimizer;
     X .= fullX[1:Ndisc]; Y .= fullX[Ndisc+1:end];
     # finally, update derivatives 
@@ -251,14 +276,17 @@ end
 function ProjectEvec!(ϕ, X, Y)
     # renormalises state to allow it to slowly project onto the leading eigenvector 
     # modifies in place, replacing the existing state with one that has the perturbation normalised
+    # returns the normalised perturbation
     ZZ = hcat(ϕ, X, Y) # full state 
     dZZ = ZZ .- ZZ0; # change in state 
     dZZmag = dZZ[:,1].^2 .+ (dZZ[:,2]./r).^2 .+ (dZZ[:,3]./r).^2  # length Ndisc; # Δϕ^2 + (ΔX/R)^2 for each s
     globalNorm = sqrt(integrateSdom(dZZmag .* volEl)); # norm over entire domain
-    # println(globalNorm)
-    dZZ = dZZ / globalNorm; # normalise the perturbation 
+    println("Global norm: $(round(globalNorm, digits = 4))")
+    targetNorm = 15; # target norm 
+    dZZ = dZZ / globalNorm * targetNorm; # normalise the perturbation 
     ZZ = ZZ0 .+ dZZ; # get the full state again 
     ϕ .= ZZ[:,1]; X .= ZZ[:,2]; Y .= ZZ[:,3]; # save new state 
+    return dZZ;
 end;
 
 ############ -------------------------------------------------- ############
@@ -283,7 +311,7 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 
 ### --- ϕ ICs --- ###
 # nonuniform but obey BCs
-α_morph = 0.125; # weight of the nonuniform 'interesting' component (0.125)
+α_morph = 0.15; # weight of the nonuniform 'interesting' component (0.125)
 
 # bump on the top of the domain
 ϕ0tempTop = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
@@ -342,7 +370,7 @@ function visDeform(ϕ, X, Y)
     # Plot deformation, colored by morphogen concentration 
     plt = plot(ΔX, ΔY, line_z = ϕ, lw = 4, alpha = 0.7,
                 c = cmap, label = "Hydra deformation", 
-                legend = :bottomright);
+                legend = false);
     plot!(-ΔX, ΔY, line_z = ϕ, lw = 4, alpha = 0.7,
                 c = cmap, label = "")
 
@@ -461,6 +489,7 @@ runAnim = true;
 runsim = true;
 tstart = time();
 if runsim
+
     global ϵsq; 
     SaveData!(0, ϕ, X, Y, Xdash, Ydash, ϵsq,
                     ϕtot, ϵtot)
@@ -478,7 +507,9 @@ if runsim
         morphRes = UpdateMorphogen!(ϕ, X, Y, ϵsq);
 
         # Step B1: project onto eigenvector 
-        ProjectEvec!(ϕ, X, Y)
+        dZZ = ProjectEvec!(ϕ, X, Y)
+        dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # Unpack 
+        αEvec = 50; # how much to plot the eigenvector (0 to plot it once)
 
         # Step C1: save necessary data 
         SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵsq,
@@ -486,6 +517,8 @@ if runsim
 
         # Step C2: visualise 
         tstr = round(t, digits = 2); 
+        # frameFullAnim = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, ϵsq,"t = $tstr");
+        # frameShapeAnim = visShape(ϕ.+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, "t = $tstr");
         frameFullAnim = visualise(ϕ, X, Y, ϵsq,"t = $tstr");
         frameShapeAnim = visShape(ϕ, X, Y, "t = $tstr");
         if runAnim
@@ -526,14 +559,15 @@ end
 ############ -------------------------------------------------- ############
 # X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
 # X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
-# ϕ .= ϕ0sideBump;
-# ϵsqtot = ElEn(ϕ, X, Y, Xdash, Ydash)
+# ϕ .= ϕ0topBump;
 # plt = visShape(ϕ, X, Y,"before"); display(plt)
-# # println("Elastic energy: ", ϵsqtot)
-# # println("Total volume energy: ", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
+# ϵsqtot = ElEn(ϕ, X, Y, Xdash, Ydash)
+# println("Elastic energy: ", ϵsqtot)
+# println("Total volume energy: ", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
 
 # res = UpdateShape!(ϕ, X, Y, Xdash, Ydash)
 # plt = visShape(ϕ, X, Y, "after"); display(plt)
+# plt = visDeform(ϕ, X, Y); display(plt);
 
 # ProjectEvec!(ϕ, X, Y)
 # plt = visShape(ϕ, X, Y, "after proj"); display(plt)
