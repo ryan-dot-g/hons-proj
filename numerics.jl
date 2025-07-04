@@ -1,9 +1,21 @@
 ### TODO 
 # SHORT TERM:
-# - number of steps until failure, not total number for time thing
+# - 
 # LONG TERM:
-# - Get surface friction working better: could pin the base (current fix), or penalise movement
-# - Relax convergence requirements to speed shape up (tried loosely but could try harder)
+# - Find second eigenvalue 
+
+# *** DESCRIPTION OF THE PROBLEM *** #
+# Y-Y0 starts to buckle at the poles. This is basically because of boundary conditions on Y:
+#   BC is that Y|poles = 0, but this is not exactly true, and is certainly not true of Y0.
+#   Any attempt to enforce BCs, either by specifying Y[1] = Y[2], or by creating a separate 
+#   derivative matrix so that Y' = DerivOperator[Y] = 0 at the poles, breaks. This is basically  
+#   because Y-Y0 does not = 0 at the poles because the correct, precise Y0 does not have 0 derivative
+#   at the end. 
+#   Things I have tried:
+#       (A) Setting a new derivative operator to enforce Y' = 0 at the poles 
+#       (B) Manually enforcing Y[1] = Y[2] to eliminate the derivative here 
+#       (C) Manual enforcement also for Y0, so that (Y-Y0)' also vanishes at the poles. 
+
 
 using LinearAlgebra, DifferentialEquations, Plots, LaTeXStrings;
 using Optim, ForwardDiff;
@@ -40,8 +52,8 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on s (40)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.04)
-tmax = 40*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
-Ω = 1e2; # not too large number: punishing potential for volume deviation (1e2)
+tmax = 80*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
+Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
 # dsint = (π/Ndisc)/2;
@@ -73,17 +85,20 @@ interior = 2:Ndisc-1; # index set for the interior of the array
 ############ ------------- DISCRETISED OPERATORS -------------- ############
 ############ -------------------------------------------------- ############
 
-# first deriv 
-P = Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)); # main section 
-P = Matrix(P); # convert out of sparse to modify elements 
+# first deriv - no boundary conditions, just a higher order forward/backward difference on the ends
+# used for x deriv 
+Px = Matrix( Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)) ) # main section 
+Px[1, 1] = -3; Px[1, 2] = 4; Px[1, 3] = -1; # forward diff top row 3rd order
+Px[Ndisc, Ndisc] = 3; Px[Ndisc, Ndisc-1] = -4; Px[Ndisc, Ndisc-2] = 1; # backward diff bottom row 
+# Px[1,1:2] = 2*[-1, 1] # trying first-order difference 
+# Px[Ndisc, Ndisc-1:Ndisc] = 2*[-1, 1]
+Px /= (2*ds); # scale 
 
-P[1, 1] = -3; P[1, 2] = 4; P[1, 3] = -1; # forward diff top row 3rd order
-P[Ndisc, Ndisc] = 3; P[Ndisc, Ndisc-1] = -4; P[Ndisc, Ndisc-2] = 1; # backward diff bottom row 
-
-# P[1,1:2] = 2*[-1, 1] # testing first-order difference 
-# P[Ndisc, Ndisc-1:Ndisc] = 2*[-1, 1]
-
-P /= (2*ds); # scale 
+# first deriv - 0 bcs, used for y and morphogen. Top and bottom row = 0
+# Py = Matrix( Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)) );
+# Py[1, :] .= 0.0; Py[Ndisc, :] .= 0.0
+# Py /= (2*ds);
+Py = Px;
 
 # integral over total s domain, using trapezoid rule
 integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
@@ -106,6 +121,12 @@ V0 = 4/3 * r^3; # initial volume, normalised by pi
 
 X0 = r * CosS; Y0 = r * SinS; # initial condition shape 
 X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives 
+
+# --- TESTING --- crude BCs
+# Y0[1] = Y0[2];
+# Y0[end] = Y0[end-1];
+
+
 Xundef = R0 * CosS; Yundef = R0 * SinS; # undeformed shape
 rXu =  X0 ./ r; rYu =  Y0 ./ r; # radial unit vectors
 
@@ -180,25 +201,25 @@ function SurfaceFriction(X, Y)
     return sum( (Y .- Y0).^2 + (X .- X0).^2 );
 end
 
-# κ_bend = 1;
-# function BendingPenalty(X)
-#     # try to stop bending by minimising derivative 
-#     ΔX = X .- X0;
-#     return sum( (P*ΔX).^2 );
-# end
+κ_bend = 0.0;
+function BendingPenalty(X)
+    # try to stop bending by minimising derivative 
+    ΔX = X .- X0;
+    return sum( (Px*ΔX).^2 );
+end
 
 function EnergyFunctional(ϕ, X, Y, Xdash, Ydash)
     # total energy functional, including elastic energy and a punishing potential and surface friction
     return ElEn(ϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2 +
                 ω * SurfaceFriction(X, Y);
-                # κ_bend * (BendingPenalty(X) + BendingPenalty(Y));
+                κ_bend * (BendingPenalty(X) + BendingPenalty(Y));
 end
 
 function EFwrapped(fullData, ϕ)
     # wrapper for the energy functional. Unpacks the data, computes derivatives, then
     # returns the energy functional to optimise 
     X = fullData[1:Ndisc]; Y = fullData[Ndisc+1:end];
-    Xdash = P*X; Ydash = P*Y;
+    Xdash = Px*X; Ydash = Py*Y;
     return EnergyFunctional(ϕ, X, Y, Xdash, Ydash);
 end
 
@@ -208,7 +229,7 @@ function MorphogenFunctional(ϕ, ϕn, X, Y, ϵsq)
     integrand1 = (ϕ .- ϕn).^2 /(2*dt) .* volEl; # time-deriv bit
     integrand2 = -f.(ϵsq) .* ϕ .* volEl; # morphogen production bit
     integrand3 = ζ * (ϕ).^2 /2 .* volEl; # disassociation bit
-    integrand4 = D * (P*ϕ).^2 /2 .* CosS; # diffusion bit, volEl already incorporated
+    integrand4 = D * (Py*ϕ).^2 /2 .* CosS; # diffusion bit, volEl already incorporated
     
     integrandTot = integrand1 .+ integrand2 .+ integrand3 .+ integrand4;
     return integrateSdom(integrandTot);
@@ -244,8 +265,13 @@ function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
                     autodiff = :forward, iterations = 15000);  # 15000 or 100 000
     fullX = result.minimizer;
     X .= fullX[1:Ndisc]; Y .= fullX[Ndisc+1:end];
+
+    # TESTING - ENFORCE BCs; 
+    # Y[1] = Y[2];
+    # Y[end] = Y[end-1];
+
     # finally, update derivatives 
-    Xdash .= P*X; Ydash .= P*Y;
+    Xdash .= Px*X; Ydash .= Py*Y;
     return result;
 end; 
 
@@ -276,17 +302,19 @@ end
 function ProjectEvec!(ϕ, X, Y)
     # renormalises state to allow it to slowly project onto the leading eigenvector 
     # modifies in place, replacing the existing state with one that has the perturbation normalised
-    # returns the normalised perturbation
+    # returns the normalised perturbation 
+    # also returns a flag if it 'converged' correctly (original norm close to target norm)
     ZZ = hcat(ϕ, X, Y) # full state 
     dZZ = ZZ .- ZZ0; # change in state 
-    dZZmag = dZZ[:,1].^2 .+ (dZZ[:,2]./r).^2 .+ (dZZ[:,3]./r).^2  # length Ndisc; # Δϕ^2 + (ΔX/R)^2 for each s
+    dZZmag = dZZ[:,1].^2 .+ (dZZ[:,2]./r).^2 .+ (dZZ[:,3]./r).^2  # length Ndisc; Δϕ^2 + (ΔX/R)^2 for each s
     globalNorm = sqrt(integrateSdom(dZZmag .* volEl)); # norm over entire domain
     println("Global norm: $(round(globalNorm, digits = 4))")
-    targetNorm = 15; # target norm 
+    targetNorm = 12; # target norm 
+    projRes = ( (globalNorm / targetNorm) <= 10 )
     dZZ = dZZ / globalNorm * targetNorm; # normalise the perturbation 
     ZZ = ZZ0 .+ dZZ; # get the full state again 
     ϕ .= ZZ[:,1]; X .= ZZ[:,2]; Y .= ZZ[:,3]; # save new state 
-    return dZZ;
+    return (dZZ, projRes);
 end;
 
 ############ -------------------------------------------------- ############
@@ -311,7 +339,7 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 
 ### --- ϕ ICs --- ###
 # nonuniform but obey BCs
-α_morph = 0.15; # weight of the nonuniform 'interesting' component (0.125)
+α_morph = 0.125; # weight of the nonuniform 'interesting' component (0.125)
 
 # bump on the top of the domain
 ϕ0tempTop = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
@@ -320,6 +348,13 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 # bump on the side of the domain 
 ϕ0tempSide = zeros(Ndisc) .+ 2*exp.(-2 * Si.^2) * ϕ0sc;
 ϕ0sideBump = α_morph*ϕ0tempSide .+ (1-α_morph)*ϕ0; 
+
+# bump on the bottom of the domain 
+ϕ0tempBottom = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
+ϕ0bottomBump = -α_morph*ϕ0tempBottom .+ (1-α_morph)*ϕ0; 
+
+# double bump 
+ϕ0doubleBump = 0.55 * ϕ0topBump + 0.45 * ϕ0sideBump; 
 
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
@@ -442,7 +477,7 @@ end
 checkFormulas = false
 if checkFormulas 
     X = r * CosS; Y = r * SinS; 
-    Xdash = P*X; Ydash = P*Y; 
+    Xdash = Px*X; Ydash = Py*Y; 
 
     # check trace of strain tensor calc (CHECKED)
     en = trStrSq(X, Y, Xdash, Ydash); 
@@ -475,6 +510,8 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 ϕ = zeros(Ndisc);
 ϕ .= ϕ0topBump;
 # ϕ .= ϕ0sideBump;
+# ϕ .= ϕ0bottomBump;
+# ϕ .= ϕ0doubleBump;
 # ϕ .= ϕ0; 
 
 # save initial strain squared
@@ -507,7 +544,7 @@ if runsim
         morphRes = UpdateMorphogen!(ϕ, X, Y, ϵsq);
 
         # Step B1: project onto eigenvector 
-        dZZ = ProjectEvec!(ϕ, X, Y)
+        (dZZ, projRes) = ProjectEvec!(ϕ, X, Y)
         dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # Unpack 
         αEvec = 50; # how much to plot the eigenvector (0 to plot it once)
 
@@ -529,7 +566,7 @@ if runsim
             # display(shapeAnim);
         # end
 
-        # Step D: raise a warning if either of the updates failed.
+        # Step D: raise a warning if any of the updates failed.
         if !Optim.converged(shapeRes)
             println("$shapeRes \n Shape update failed to converge: Step $n")
             global Ncutoff = n;
@@ -537,6 +574,11 @@ if runsim
         end
         if !Optim.converged(morphRes)
             println("$morphRes \n Morphogen update failed to converge: Step $n")
+            global Ncutoff = n;
+            break
+        end
+        if !projRes 
+            println("Global norm exceeded \n Eigenvector projection failed to converge: Step $n")
             global Ncutoff = n;
             break
         end
@@ -555,7 +597,7 @@ end
 
 
 ############ -------------------------------------------------- ############
-############ ---------------- TESTING SHAPE UPDATES ------------------ ############
+############ ---------------- TROUBLESHOOTING SHAPE UPDATES ------------------ ############
 ############ -------------------------------------------------- ############
 # X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
 # X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
@@ -571,3 +613,26 @@ end
 
 # ProjectEvec!(ϕ, X, Y)
 # plt = visShape(ϕ, X, Y, "after proj"); display(plt)
+
+############ -------------------------------------------------- ############
+############ ---------------- TROUBLESHOOTING FULL STEPS ------------------ ############
+############ -------------------------------------------------- ############
+# X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
+# X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
+# ϕ .= ϕ0topBump;
+
+# shapeRes_test = UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
+# plt = visShape(ϕ, X, Y, "shape"); display(plt)
+# plt = visDeform(ϕ, X, Y); display(plt);
+# # plt = plot(Px*(X.-X0), Py*(Y.-Y0)); display(plt);
+
+# # Step A2: compute new strain tensor squared 
+# ϵsq = trStrSq(X, Y, Xdash, Ydash); 
+
+# # Step A3: evolve morphogen
+# morphRes_test = UpdateMorphogen!(ϕ, X, Y, ϵsq);
+# # plt = plot(Si, ϕ.-ϕ0); display(plt);
+
+# # Step B1: project onto eigenvector 
+# (dZZ_test, projRes_test) = ProjectEvec!(ϕ, X, Y);
+
