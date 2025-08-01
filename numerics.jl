@@ -100,6 +100,13 @@ Px /= (2*ds); # scale
 # Py /= (2*ds);
 Py = Px;
 
+# first deriv periodic bcs 
+# Py = Matrix( Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)) );
+# Py[1, :] .= 0.0; Py[Ndisc, :] .= 0.0;
+# Py[1, 2] = 1.0; Py[1, end] = -1.0; 
+# Py[Ndisc, 1] = 1.0; Py[Ndisc, Ndisc-1] = -1.0;
+# Py /= (2*ds);
+
 # integral over total s domain, using trapezoid rule
 integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
 
@@ -208,10 +215,18 @@ function BendingPenalty(X)
     return sum( (Px*ΔX).^2 );
 end
 
+κ_fric = 0.0;
+function Friction(X, Y)
+    ΔX = X .- dZZ[:,2];
+    ΔY = Y .- dZZ[:,3];
+    return sum(ΔX.^2 + ΔY.^2);
+end
+
 function EnergyFunctional(ϕ, X, Y, Xdash, Ydash)
     # total energy functional, including elastic energy and a punishing potential and surface friction
     return ElEn(ϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2 +
-                ω * SurfaceFriction(X, Y);
+                ω * SurfaceFriction(X, Y) + 
+                κ_fric * Friction(X, Y) + 
                 κ_bend * (BendingPenalty(X) + BendingPenalty(Y));
 end
 
@@ -308,9 +323,10 @@ function ProjectEvec!(ϕ, X, Y)
     dZZ = ZZ .- ZZ0; # change in state 
     dZZmag = dZZ[:,1].^2 .+ (dZZ[:,2]./r).^2 .+ (dZZ[:,3]./r).^2  # length Ndisc; Δϕ^2 + (ΔX/R)^2 for each s
     globalNorm = sqrt(integrateSdom(dZZmag .* volEl)); # norm over entire domain
-    println("Global norm: $(round(globalNorm, digits = 4))")
-    targetNorm = 12; # target norm 
-    projRes = ( (globalNorm / targetNorm) <= 10 )
+    println("Global norm: $(round(globalNorm, digits = 4))") 
+    targetNorm = 6; # target norm 
+    projRes = ( (globalNorm / targetNorm) <= 10 ) 
+    # projRes = true;
     dZZ = dZZ / globalNorm * targetNorm; # normalise the perturbation 
     ZZ = ZZ0 .+ dZZ; # get the full state again 
     ϕ .= ZZ[:,1]; X .= ZZ[:,2]; Y .= ZZ[:,3]; # save new state 
@@ -508,7 +524,7 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 
 # now morphogen array
 ϕ = zeros(Ndisc);
-ϕ .= ϕ0topBump;
+ϕ .= ϕ0topBump;  
 # ϕ .= ϕ0sideBump;
 # ϕ .= ϕ0bottomBump;
 # ϕ .= ϕ0doubleBump;
@@ -523,11 +539,14 @@ shapeAnim = Animation();
 simName = "temp"; # "temp"
 runAnim = true;
 
+dZZ = zeros(Ndisc, 3); 
+
 runsim = true;
 tstart = time();
 if runsim
 
     global ϵsq; 
+    global dZZ; 
     SaveData!(0, ϕ, X, Y, Xdash, Ydash, ϵsq,
                     ϕtot, ϵtot)
 
@@ -535,7 +554,7 @@ if runsim
         t = Tn[n];
 
         # Step A1: update shape of X(s), Y(s) and derivatives 
-        shapeRes = UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
+        # shapeRes = UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
 
         # Step A2: compute new strain tensor squared 
         ϵsq = trStrSq(X, Y, Xdash, Ydash); 
@@ -583,7 +602,8 @@ if runsim
             break
         end
 
-        println("$n, $(round(time() - tstart)), $(shapeRes.iterations)")
+        println("$n, $(round(time() - tstart)), $(shapeRes.iterations)") 
+        # println("$n, $(round(time() - tstart))")
     end
 
     # output finish data 
