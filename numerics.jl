@@ -36,15 +36,15 @@ r = 160; # radius of initial condition sphere (160 for now)
 E0 = 440.0; # base Young's modulus (440). NOTE: this interacts with Ω
 h = 20.0 # bilayer thickness (20). NOTE: this interacts with Ω
 b = 5.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
-κ = 1.0; # TODO morphogen stress upregulation coefficient (1 for now)
-ζ = 0.2; # morphogen decay rate (0.2)
-D = 0.01; # morphogen diffusion coefficient (0.01)
+κ = 0.0; # TODO morphogen stress upregulation coefficient (1 for now) # SPHERHARM
+ζ = 0.0; # morphogen decay rate (0.2) # SPHERHARM
+D = 1000.0; # morphogen diffusion coefficient (0.01) # SPHERHARM
 
 # PARAM SETS OF NOTE: 
 # - (A) 
 
 E(ϕ) = E0 * h * exp(-b*ϕ); # elasticity function
-f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function 
+f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function 
 
 ############ -------------------------------------------------- ############
 ############ ------------- NUMERICAL PARAMETERS --------------- ############
@@ -52,7 +52,7 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on s (40)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.04)
-tmax = 28*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
+tmax = 2*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
@@ -324,7 +324,7 @@ function ProjectEvec!(ϕ, X, Y)
     dZZ = ZZ .- ZZ0; # change in state 
     dZZmag = dZZ[:,1].^2 .+ (dZZ[:,2]./r).^2 .+ (dZZ[:,3]./r).^2  # length Ndisc; Δϕ^2 + (ΔX/R)^2 for each s
     globalNorm = sqrt(integrateSdom(dZZmag .* volEl)); # norm over entire domain
-    println("Global norm: $(round(globalNorm, digits = 4))") 
+    # println("Global norm: $(round(globalNorm, digits = 4))") 
     targetNorm = 6; # target norm 
     projRes = ( (globalNorm / targetNorm) <= 10 ) 
     # projRes = true;
@@ -357,7 +357,7 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 ### --- ϕ ICs --- ###
 # nonuniform but obey BCs
 α_morph = 0.125; # weight of the nonuniform 'interesting' component (0.125)
-
+ϕ0 .= 1.0; ϕ0sc = 1.0; # SPHERHARM
 # bump on the top of the domain
 ϕ0tempTop = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
 ϕ0topBump = α_morph*ϕ0tempTop .+ (1-α_morph)*ϕ0; 
@@ -371,7 +371,8 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 ϕ0bottomBump = -α_morph*ϕ0tempBottom .+ (1-α_morph)*ϕ0; 
 
 # double bump 
-ϕ0doubleBump = 0.55 * ϕ0topBump + 0.45 * ϕ0sideBump; 
+ϕ0tempDouble = zeros(Ndisc) .+ sin.(2*Si).^2 * ϕ0sc .+ ϕ0sc;
+ϕ0doubleBump = α_morph*ϕ0tempDouble .+ (1-α_morph)*ϕ0;
 
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
@@ -451,14 +452,22 @@ function visRdef(ϕ, X, Y)
     return plt;
 end
 
-function visQtys(ϕ, ϵsq, titleTxt = false)
+function visQtys(ϕ, ϵsq, titleTxt = false;
+                    plotE = true, plotSin = false)
     # plots morphogen and strain against S, returning plot object 
     plt = plot(Si, ϕ, label = L"\varphi", lw = 1, line_z = ϕ, c = cmap, ls = :dash, 
                 xlabel = "s", ylabel = "Morphogen", legend = :topleft, colorbar = false,
                 legendfontsize = 14);
-    plot!(twinx(), Si, ϵsq, label = L"\epsilon^2", lw = 2, line_z = ϕ, c = cmap,
-            ylabel = "Strain", legend = :left, colorbar = false,
-            legendfontsize = 14)
+    if plotE
+        plot!(twinx(), Si, ϵsq, label = L"\epsilon^2", lw = 2, line_z = ϕ, c = cmap,
+                ylabel = "Strain", legend = :left, colorbar = false,
+                legendfontsize = 14)
+    end
+    if plotSin
+        
+        sinScaled = SinS * (maximum(ϕ)-minimum(ϕ)) .+ (maximum(ϕ)+minimum(ϕ))/2;
+        plot!(Si, sinScaled, label = "sin(s)", lw = 1, color = :red)
+    end
     if titleTxt isa String
         title!(titleTxt)
     end
@@ -691,4 +700,22 @@ end
 
 
 
+############ -------------------------------------------------- ############
+############ ---------------- OTHER TESTING CODE ------------------ ############
+############ -------------------------------------------------- ############
+
+X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
+ϕ .= ϕ0doubleBump;
+plt = visShape(ϕ, X, Y,"Before diffusion eigenfinding"); display(plt); savefig(plt,"testSphHm-shapeB4.png")
+ϵsq = trStrSq(X, Y, Xdash, Ydash); 
+plt = visQtys(ϕ, ϵsq, "Before diffusion eigenfinding", plotE = false); display(plt); savefig(plt, "testSphHm-morphB4.png")
+
+for i = 1:1000;
+    res = UpdateMorphogen!(ϕ, X, Y, ϵsq);
+    # (dZZ, projRes) = ProjectEvec!(ϕ, X, Y) # activateforProjEv
+    # dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # Unpack # activateforProjEv
+end
+plt = visShape(ϕ, X, Y, "After diffusion eigenfinding"); display(plt); savefig(plt,"testSphHm-shapeAF.png")
+ϵsq = trStrSq(X, Y, Xdash, Ydash); 
+plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false, plotSin = true); display(plt); savefig(plt,"testSphHm-morphAF.png")
 
