@@ -52,11 +52,12 @@ f(ϵ) = κ * ϵ; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on s (40)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.04)
-tmax = 80*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
+tmax = 28*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
 # dsint = (π/Ndisc)/2;
+αEvec = 2; # how much to plot the eigenvector (1 to plot it once)
 
 cfl = 2 * D * dt / (π/Ndisc)^2; # cfl condition for diffusion, checking sensible. ds is approximate 
 # println("CFL number (should be <<1): $(round(cfl, digits = 5))")
@@ -393,7 +394,7 @@ function visShape(ϕ, X, Y, titleTxt = false)
     scatter!(-X, Y, ms = 2.0, color = :black, label = "")
 
     # plot initial shape 
-    plot!(X0, Y0, lw = 1, color = :grey, ls = :dash, label = "Initial shape"); 
+    plot!(X0, Y0, lw = 1, color = :grey, ls = :dash, label = "Steady-state"); 
     plot!(-X0, Y0, lw = 1, color = :grey, ls = :dash, label = "");
 
     # dummy bit to get a good color scale 
@@ -403,7 +404,7 @@ function visShape(ϕ, X, Y, titleTxt = false)
     # end
 
     # other plot necessities
-    xlabel!("x"); ylabel!("y");
+    xlabel!("x (μm)"); ylabel!("y (μm)");
     lm = 1.33 * r; xlims!(-lm, lm); ylims!(-lm, lm);
     if titleTxt isa String
         title!(titleTxt)
@@ -420,8 +421,8 @@ function visDeform(ϕ, X, Y)
 
     # Plot deformation, colored by morphogen concentration 
     plt = plot(ΔX, ΔY, line_z = ϕ, lw = 4, alpha = 0.7,
-                c = cmap, label = "Hydra deformation", 
-                legend = false);
+                c = cmap, label = "Deformation " * L"\mathbf{x}-\mathbf{x}_0", 
+                legend = :topleft);
     plot!(-ΔX, ΔY, line_z = ϕ, lw = 4, alpha = 0.7,
                 c = cmap, label = "")
 
@@ -430,7 +431,7 @@ function visDeform(ϕ, X, Y)
     scatter!(-ΔX, ΔY, ms = 2.0, color = :black, label = "")
 
     # other plot necessities
-    xlabel!("x"); ylabel!("y");
+    xlabel!("x (μm)"); ylabel!("y (μm)");
     # lm = 0.1 * r; xlims!(-lm, lm); ylims!(-lm, lm);
 
     return plt;
@@ -445,19 +446,22 @@ function visRdef(ϕ, X, Y)
 
     # then, plot dr against S 
     plt = plot(Si, Δr, label = L"\Delta r", lw = 2, line_z = ϕ, c = cmap,
-                xlabel = "s", ylabel = "r", legend = :topright, colorbar = false,
+                xlabel = "s", ylabel = "r (μm)", legend = :topleft, colorbar = false,
                 legendfontsize = 14);
     return plt;
 end
 
-function visQtys(ϕ, ϵsq)
+function visQtys(ϕ, ϵsq, titleTxt = false)
     # plots morphogen and strain against S, returning plot object 
-    plt = plot(Si, ϕ .- ϕ0, label = L"Δ\varphi", lw = 1.5, line_z = ϕ, c = cmap, ls = :dot, 
-                xlabel = "s", ylabel = "Morphogen", legend = :topright, colorbar = false,
+    plt = plot(Si, ϕ, label = L"\varphi", lw = 1, line_z = ϕ, c = cmap, ls = :dash, 
+                xlabel = "s", ylabel = "Morphogen", legend = :topleft, colorbar = false,
                 legendfontsize = 14);
     plot!(twinx(), Si, ϵsq, label = L"\epsilon^2", lw = 2, line_z = ϕ, c = cmap,
-            ylabel = "Strain", legend = :right, colorbar = false,
+            ylabel = "Strain", legend = :left, colorbar = false,
             legendfontsize = 14)
+    if titleTxt isa String
+        title!(titleTxt)
+    end
     return plt;
 end
 
@@ -479,7 +483,7 @@ function postPlot(Tn, ϕtot, ϵtot, Ncutoff)
     # returns the plot object 
     plt = plot(Tn[1:Ncutoff], ϕtot[1:Ncutoff], label = L"\varphi", 
                 color = :blue, lw = 2,
-                title = "Hydra dynamics", xlabel = "t", ylabel = "Total morphogen",
+                title = "Hydra dynamics", xlabel = "t (hr)" * L"^{-1}", ylabel = "Total morphogen",
                 legend = :topleft);
     plot!(twinx(), Tn[1:Ncutoff], ϵtot[1:Ncutoff], label = L"\epsilon^2", 
             color = :red, lw = 2,
@@ -511,6 +515,47 @@ if checkFormulas
     XddashTrue = -X;
     println(XddashTrue .- Xddash);
     println(maximum( abs.(XddashTrue .- Xddash) ));
+end
+
+############ -------------------------------------------------- ############
+############ ---------------- TROUBLESHOOTING FNS ------------------ ############
+############ -------------------------------------------------- ############
+function TroubleshootMorphUpdates()
+    # wrapper to test morphogen updates on a nonuniform shape 
+    X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
+    ϕ .= ϕ0;
+    plt = visShape(ϕ, X, Y,"Before morphogen updates"); display(plt); savefig(plt,"testMorph-shapeB4.png")
+    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
+    plt = visQtys(ϕ, ϵsq, "Before morphogen updates"); display(plt); savefig(plt, "testMorph-morphB4.png")
+
+    # ϵsqtot = ElEn(ϕ, X, Y, Xdash, Ydash)
+    # println("Elastic energy: ", ϵsqtot)
+    # println("Total volume energy: ", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
+
+    for i = 1:100;
+        res = UpdateMorphogen!(ϕ, X, Y, ϵsq);
+    end
+    plt = visShape(ϕ, X, Y, "After morphogen updates"); display(plt); savefig(plt,"testMorph-shapeAF.png")
+    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
+    plt = visQtys(ϕ, ϵsq, "After morphogen updates"); display(plt); savefig(plt,"testMorph-morphAF.png")
+end
+
+function TroubleshootShapeUpdates()
+    # code wrapper for when shape updates need to be tested/plotted 
+    X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
+    ϕ .= ϕ0doubleBump;
+    plt = visShape(ϕ, X, Y,"Before shape update"); display(plt); savefig(plt,"testShape-shapeB4.png")
+    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
+    plt = visQtys(ϕ, ϵsq, "Before shape update"); display(plt); savefig(plt, "testShape-morphB4.png")
+
+    # ϵsqtot = ElEn(ϕ, X, Y, Xdash, Ydash)
+    # println("Elastic energy: ", ϵsqtot)
+    # println("Total volume energy: ", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
+
+    res = UpdateShape!(ϕ, X, Y, Xdash, Ydash)
+    plt = visShape(ϕ, X, Y, "After shape update"); display(plt); savefig(plt,"testShape-shapeAF.png")
+    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
+    plt = visQtys(ϕ, ϵsq, "After shape update"); display(plt); savefig(plt,"testShape-morphAF.png")
 end
 
 ############ -------------------------------------------------- ############
@@ -554,7 +599,7 @@ if runsim
         t = Tn[n];
 
         # Step A1: update shape of X(s), Y(s) and derivatives 
-        # shapeRes = UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
+        shapeRes = UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
 
         # Step A2: compute new strain tensor squared 
         ϵsq = trStrSq(X, Y, Xdash, Ydash); 
@@ -563,9 +608,8 @@ if runsim
         morphRes = UpdateMorphogen!(ϕ, X, Y, ϵsq);
 
         # Step B1: project onto eigenvector 
-        (dZZ, projRes) = ProjectEvec!(ϕ, X, Y)
-        dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # Unpack 
-        αEvec = 50; # how much to plot the eigenvector (0 to plot it once)
+        (dZZ, projRes) = ProjectEvec!(ϕ, X, Y) # activateforProjEv
+        dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # Unpack # activateforProjEv
 
         # Step C1: save necessary data 
         SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵsq,
@@ -573,16 +617,20 @@ if runsim
 
         # Step C2: visualise 
         tstr = round(t, digits = 2); 
-        # frameFullAnim = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, ϵsq,"t = $tstr");
-        # frameShapeAnim = visShape(ϕ.+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, "t = $tstr");
-        frameFullAnim = visualise(ϕ, X, Y, ϵsq,"t = $tstr");
-        frameShapeAnim = visShape(ϕ, X, Y, "t = $tstr");
+        frameFullAnim = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, ϵsq,"t = $tstr"); # activateforProjEv
+        frameShapeAnim = visShape(ϕ.+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, "t = $tstr"); # activateforProjEv
+        # frameFullAnim = visualise(ϕ, X, Y, ϵsq,"t = $tstr");
+        # frameShapeAnim = visShape(ϕ, X, Y, "t = $tstr");
         if runAnim
             frame(fullAnim, frameFullAnim)
             frame(shapeAnim, frameShapeAnim) 
         end
-        # if mod(n-1, plotRes) == 0 || n == Ntimes-1 # always visualise first and last 
-            # display(shapeAnim);
+
+        # special code for time evolution. Show some frames, then all info, then blowup frame
+        # if n in [1, 8, 16, Ntimes-1]
+        #     savefig(frameShapeAnim, "$n.png")
+        # elseif n == Ntimes-2
+        #     savefig(frameFullAnim, "$n.png")
         # end
 
         # Step D: raise a warning if any of the updates failed.
@@ -596,7 +644,7 @@ if runsim
             global Ncutoff = n;
             break
         end
-        if !projRes 
+        if !projRes # activteforProjEV 
             println("Global norm exceeded \n Eigenvector projection failed to converge: Step $n")
             global Ncutoff = n;
             break
@@ -613,26 +661,11 @@ if runsim
     mp4(fullAnim, simFP * "/sim_$simName-full.mp4", fps = 4);
     mp4(shapeAnim, simFP * "/sim_$simName-shape.mp4", fps = 4);
     plt = postPlot(Tn, ϕtot, ϵtot, Ncutoff); display(plt); 
+
+    # pltLE = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, trStrSq(X, Y, Xdash, Ydash));
+    # display(pltLE); savefig(pltLE, "leadingEvec.png")
 end
 
-
-############ -------------------------------------------------- ############
-############ ---------------- TROUBLESHOOTING SHAPE UPDATES ------------------ ############
-############ -------------------------------------------------- ############
-# X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
-# X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
-# ϕ .= ϕ0topBump;
-# plt = visShape(ϕ, X, Y,"before"); display(plt)
-# ϵsqtot = ElEn(ϕ, X, Y, Xdash, Ydash)
-# println("Elastic energy: ", ϵsqtot)
-# println("Total volume energy: ", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
-
-# res = UpdateShape!(ϕ, X, Y, Xdash, Ydash)
-# plt = visShape(ϕ, X, Y, "after"); display(plt)
-# plt = visDeform(ϕ, X, Y); display(plt);
-
-# ProjectEvec!(ϕ, X, Y)
-# plt = visShape(ϕ, X, Y, "after proj"); display(plt)
 
 ############ -------------------------------------------------- ############
 ############ ---------------- TROUBLESHOOTING FULL STEPS ------------------ ############
@@ -655,4 +688,7 @@ end
 
 # # Step B1: project onto eigenvector 
 # (dZZ_test, projRes_test) = ProjectEvec!(ϕ, X, Y);
+
+
+
 
