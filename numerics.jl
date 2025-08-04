@@ -51,7 +51,7 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 ############ -------------------------------------------------- ############
 Ndisc = 40; # number of discretisation points on s (40)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
-dt = 0.03; # time discretisation (0.04)
+dt = 0.003; # time discretisation (0.03) # SPHERHARM
 tmax = 2*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
@@ -371,7 +371,7 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 ϕ0bottomBump = -α_morph*ϕ0tempBottom .+ (1-α_morph)*ϕ0; 
 
 # double bump 
-ϕ0tempDouble = zeros(Ndisc) .+ sin.(2*Si).^2 * ϕ0sc .+ ϕ0sc;
+ϕ0tempDouble = zeros(Ndisc) .+ sin.(4*Si).^2 * ϕ0sc .+ ϕ0sc;
 ϕ0doubleBump = α_morph*ϕ0tempDouble .+ (1-α_morph)*ϕ0;
 
 ############ -------------------------------------------------- ############
@@ -453,20 +453,19 @@ function visRdef(ϕ, X, Y)
 end
 
 function visQtys(ϕ, ϵsq, titleTxt = false;
-                    plotE = true, plotSin = false)
+                    plotE = true, plotTrig = false)
     # plots morphogen and strain against S, returning plot object 
     plt = plot(Si, ϕ, label = L"\varphi", lw = 1, line_z = ϕ, c = cmap, ls = :dash, 
                 xlabel = "s", ylabel = "Morphogen", legend = :topleft, colorbar = false,
-                legendfontsize = 14);
+                legendfontsize = 12);
     if plotE
         plot!(twinx(), Si, ϵsq, label = L"\epsilon^2", lw = 2, line_z = ϕ, c = cmap,
                 ylabel = "Strain", legend = :left, colorbar = false,
-                legendfontsize = 14)
+                legendfontsize = 12)
     end
-    if plotSin
-        
-        sinScaled = SinS * (maximum(ϕ)-minimum(ϕ)) .+ (maximum(ϕ)+minimum(ϕ))/2;
-        plot!(Si, sinScaled, label = "sin(s)", lw = 1, color = :red)
+    if plotTrig
+        sinScaled = -CosS * (maximum(ϕ)-minimum(ϕ)) .+ (maximum(ϕ)+minimum(ϕ))/2;
+        plot!(Si, sinScaled, label = L"-\cos(s)", lw = 1, color = :red)
     end
     if titleTxt isa String
         title!(titleTxt)
@@ -712,10 +711,10 @@ plt = visQtys(ϕ, ϵsq, "Before diffusion eigenfinding", plotE = false); display
 
 for i = 1:1000;
     res = UpdateMorphogen!(ϕ, X, Y, ϵsq);
-    # (dZZ, projRes) = ProjectEvec!(ϕ, X, Y) # activateforProjEv
-    # dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # Unpack # activateforProjEv
+    (dZZ, projRes) = ProjectEvec!(ϕ, X, Y) # activateforProjEv
+    dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # Unpack # activateforProjEv
 end
 plt = visShape(ϕ, X, Y, "After diffusion eigenfinding"); display(plt); savefig(plt,"testSphHm-shapeAF.png")
 ϵsq = trStrSq(X, Y, Xdash, Ydash); 
-plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false, plotSin = true); display(plt); savefig(plt,"testSphHm-morphAF.png")
+plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false, plotTrig = true); display(plt); savefig(plt,"testSphHm-morphAF.png")
 
