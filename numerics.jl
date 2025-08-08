@@ -108,6 +108,10 @@ Py = Px;
 # Py[Ndisc, 1] = 1.0; Py[Ndisc, Ndisc-1] = -1.0;
 # Py /= (2*ds);
 
+# convert to functions 
+FDX(J) = Px*J;
+FDY(J) = Py*J;
+
 # integral over total s domain, using trapezoid rule
 integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
 
@@ -125,6 +129,7 @@ volEl = R0^2 * CosS; # volume element
 V0 = 4/3 * r^3; # initial volume, normalised by pi
 
 ϕ0sc = 1/ζ * f.(ϵ0sc); # steady-state morphogen scalar
+ϕ0sc = (ζ==0) ? 1.0 : ϕ0sc;
 ϕ0 = zeros(Ndisc) .+ ϕ0sc; # steady-state morphogen over the full grid 
 
 X0 = r * CosS; Y0 = r * SinS; # initial condition shape 
@@ -138,7 +143,7 @@ X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives
 Xundef = R0 * CosS; Yundef = R0 * SinS; # undeformed shape
 rXu =  X0 ./ r; rYu =  Y0 ./ r; # radial unit vectors
 
-ZZ0 = hcat(ϕ0, X0, Y0); # full state vector, as Ndisc * 3 matrix
+ZZ0 = hcat(ϕ0, X0, Y0); # full state vector, as Ndisc * 3 matrix 
 
 ## computing initial states as numerical optimisers not analytic optimisers 
 # resultNumShape = optimize(x -> EFwrapped(x, ϕ0), 
@@ -213,7 +218,7 @@ end
 function BendingPenalty(X)
     # try to stop bending by minimising derivative 
     ΔX = X .- X0;
-    return sum( (Px*ΔX).^2 );
+    return sum( (FDX(ΔX)).^2 );
 end
 
 κ_fric = 0.0;
@@ -235,7 +240,7 @@ function EFwrapped(fullData, ϕ)
     # wrapper for the energy functional. Unpacks the data, computes derivatives, then
     # returns the energy functional to optimise 
     X = fullData[1:Ndisc]; Y = fullData[Ndisc+1:end];
-    Xdash = Px*X; Ydash = Py*Y;
+    Xdash = FDX(X); Ydash = FDY(Y);
     return EnergyFunctional(ϕ, X, Y, Xdash, Ydash);
 end
 
@@ -245,7 +250,7 @@ function MorphogenFunctional(ϕ, ϕn, X, Y, ϵsq)
     integrand1 = (ϕ .- ϕn).^2 /(2*dt) .* volEl; # time-deriv bit
     integrand2 = -f.(ϵsq) .* ϕ .* volEl; # morphogen production bit
     integrand3 = ζ * (ϕ).^2 /2 .* volEl; # disassociation bit
-    integrand4 = D * (Py*ϕ).^2 /2 .* CosS; # diffusion bit, volEl already incorporated
+    integrand4 = D * FDY(ϕ).^2 /2 .* CosS; # diffusion bit, volEl already incorporated
     
     integrandTot = integrand1 .+ integrand2 .+ integrand3 .+ integrand4;
     return integrateSdom(integrandTot);
@@ -287,7 +292,7 @@ function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     # Y[end] = Y[end-1];
 
     # finally, update derivatives 
-    Xdash .= Px*X; Ydash .= Py*Y;
+    Xdash .= FDX(X); Ydash .= FDY(Y);
     return result;
 end; 
 
@@ -357,7 +362,6 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 ### --- ϕ ICs --- ###
 # nonuniform but obey BCs
 α_morph = 0.125; # weight of the nonuniform 'interesting' component (0.125)
-ϕ0 .= 1.0; ϕ0sc = 1.0; # SPHERHARM
 # bump on the top of the domain
 ϕ0tempTop = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
 ϕ0topBump = α_morph*ϕ0tempTop .+ (1-α_morph)*ϕ0; 
@@ -505,7 +509,7 @@ end
 checkFormulas = false
 if checkFormulas 
     X = r * CosS; Y = r * SinS; 
-    Xdash = Px*X; Ydash = Py*Y; 
+    Xdash = FDX(X); Ydash = FDY(Y); 
 
     # check trace of strain tensor calc (CHECKED)
     en = trStrSq(X, Y, Xdash, Ydash); 
@@ -566,6 +570,24 @@ function TroubleshootShapeUpdates()
     plt = visQtys(ϕ, ϵsq, "After shape update"); display(plt); savefig(plt,"testShape-morphAF.png")
 end
 
+function TroubleshootSphericalHarmonics()
+    # code wrapper to get spherical harmonics from diffusion 
+    X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
+    ϕ .= ϕ0doubleBump;
+    plt = visShape(ϕ, X, Y,"Before diffusion eigenfinding"); display(plt); savefig(plt,"testSphHm-shapeB4.png")
+    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
+    plt = visQtys(ϕ, ϵsq, "Before diffusion eigenfinding", plotE = false); display(plt); savefig(plt, "testSphHm-morphB4.png")
+
+    for i = 1:1000;
+        res = UpdateMorphogen!(ϕ, X, Y, ϵsq);
+        (dZZ, projRes) = ProjectEvec!(ϕ, X, Y) 
+        dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; 
+    end
+    plt = visShape(ϕ, X, Y, "After diffusion eigenfinding"); display(plt); savefig(plt,"testSphHm-shapeAF.png")
+    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
+    plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false, plotTrig = true); display(plt); savefig(plt,"testSphHm-morphAF.png")
+end
+
 ############ -------------------------------------------------- ############
 ############ ---------------- TIME EVOLUTION ------------------ ############
 ############ -------------------------------------------------- ############
@@ -594,7 +616,7 @@ runAnim = true;
 
 dZZ = zeros(Ndisc, 3); 
 
-runsim = true;
+runsim = false;
 tstart = time();
 if runsim
 
@@ -685,7 +707,7 @@ end
 # shapeRes_test = UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
 # plt = visShape(ϕ, X, Y, "shape"); display(plt)
 # plt = visDeform(ϕ, X, Y); display(plt);
-# # plt = plot(Px*(X.-X0), Py*(Y.-Y0)); display(plt);
+# # plt = plot(FDX(X.-X0), FDY(Y.-Y0)); display(plt);
 
 # # Step A2: compute new strain tensor squared 
 # ϵsq = trStrSq(X, Y, Xdash, Ydash); 
@@ -705,16 +727,14 @@ end
 
 X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 ϕ .= ϕ0doubleBump;
-plt = visShape(ϕ, X, Y,"Before diffusion eigenfinding"); display(plt); savefig(plt,"testSphHm-shapeB4.png")
 ϵsq = trStrSq(X, Y, Xdash, Ydash); 
-plt = visQtys(ϕ, ϵsq, "Before diffusion eigenfinding", plotE = false); display(plt); savefig(plt, "testSphHm-morphB4.png")
+plt = visQtys(ϕ, ϵsq, "Before diffusion eigenfinding", plotE = false); display(plt);
 
 for i = 1:1000;
-    res = UpdateMorphogen!(ϕ, X, Y, ϵsq);
-    (dZZ, projRes) = ProjectEvec!(ϕ, X, Y) # activateforProjEv
-    dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # Unpack # activateforProjEv
+    rest = UpdateMorphogen!(ϕ, X, Y, ϵsq);
+    (dZZt, projRes) = ProjectEvec!(ϕ, X, Y) 
+    dϕ = dZZt[:,1]; dX = dZZt[:,2]; dY = dZZt[:,3]; 
 end
-plt = visShape(ϕ, X, Y, "After diffusion eigenfinding"); display(plt); savefig(plt,"testSphHm-shapeAF.png")
 ϵsq = trStrSq(X, Y, Xdash, Ydash); 
-plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false, plotTrig = true); display(plt); savefig(plt,"testSphHm-morphAF.png")
+plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false); display(plt); 
 

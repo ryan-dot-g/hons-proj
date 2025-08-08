@@ -14,7 +14,8 @@ plt = plot(Xm.(ξarr), [4 for _ in ξarr], label = "",
             xlabel = "X", xguidefont = font(16),
             xticks = [0, 1], yticks = [0],
             xtickfont = font(16), ytickfont = font(16),
-            legend = :topright, legendfont = font(12));
+            legend = :topright, legendfont = font(12)
+            );
 scatter!(Xm.(ξarr), [4 for _ in ξarr], label = "Undeformed material points",
             color = :blue, ms = 6)
 
@@ -23,6 +24,8 @@ plot!(xm.(ξarr), [2 for _ in ξarr], label = "",
             color = :red, linewidth = 2);
 scatter!(xm.(ξarr), [2 for _ in ξarr], label = "Deformed material points",
             color = :red, ms = 6)
+
+savefig(plt, "1dstrainHalf.png")
 
 # deformation gradient 
 plot!(Xm.(ξfine), Fm.(ξfine), label = "Deformation gradient",
