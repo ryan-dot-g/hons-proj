@@ -71,7 +71,10 @@ cmap = cgrad(:viridis); # colormap for morphogen concentration
 ############ -------------------------------------------------- ############
 ############ ---------------- NUMERICAL SETUP ----------------- ############
 ############ -------------------------------------------------- ############
+avg(vec)=[(vec[i]+vec[i+1])/2 for i=1:length(vec)-1]
+
 Si = range(smin+dsint, smax-dsint, Ndisc); # grid of s values 
+SiCt = avg(Si); # svalscentre
 ds = Si[2] - Si[1]; 
 Tn = 0:dt:tmax; # grid of t values 
 Ntimes = length(Tn); 
@@ -111,14 +114,20 @@ Py = Px;
 # convert to functions 
 FDX(J) = Px*J;
 FDY(J) = Py*J;
+FDCT(J) = diff(J)/ds; # centered first derivative
 
 # integral over total s domain, using trapezoid rule
 integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
+
+# inner product for eigenvector calculation 
+inp(ZZ1, ZZ2) = sqrt(integrateSdom((ZZ1[:,1].*ZZ2[:,1] .+ ZZ1[:,2].*ZZ2[:,2]/r^2 
+                    .+ ZZ1[:,3].*ZZ2[:,3]/r^2 ) .* volEl)) 
 
 ############ -------------------------------------------------- ############
 ############ ------------- PRESAVING CALCULATIONS ------------- ############
 ############ -------------------------------------------------- ############
 CosS = cos.(Si); SinS = sin.(Si); # presaving trigs 
+CosSCt = cos.(SiCt);
 volEl = R0^2 * CosS; # volume element
 
 ############ -------------------------------------------------- ############
@@ -138,7 +147,6 @@ X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives
 # --- TESTING --- crude BCs
 # Y0[1] = Y0[2];
 # Y0[end] = Y0[end-1];
-
 
 Xundef = R0 * CosS; Yundef = R0 * SinS; # undeformed shape
 rXu =  X0 ./ r; rYu =  Y0 ./ r; # radial unit vectors
@@ -250,10 +258,10 @@ function MorphogenFunctional(ϕ, ϕn, X, Y, ϵsq)
     integrand1 = (ϕ .- ϕn).^2 /(2*dt) .* volEl; # time-deriv bit
     integrand2 = -f.(ϵsq) .* ϕ .* volEl; # morphogen production bit
     integrand3 = ζ * (ϕ).^2 /2 .* volEl; # disassociation bit
-    integrand4 = D * FDY(ϕ).^2 /2 .* CosS; # diffusion bit, volEl already incorporated
+    integrand4 = D * FDCT(ϕ).^2 /2 .* CosSCt; # diffusion bit, volEl already incorporated
     
-    integrandTot = integrand1 .+ integrand2 .+ integrand3 .+ integrand4;
-    return integrateSdom(integrandTot);
+    integrandTot = integrand1 .+ integrand2 .+ integrand3;
+    return integrateSdom(integrandTot) + integrateSdom(integrand4);
 end
 
 ############ -------------------------------------------------- ############
@@ -320,15 +328,19 @@ end
 ############ -------------------------------------------------- ############
 ############ --------------- EIGENVECTOR STEPS ---------------- ############
 ############ -------------------------------------------------- ############
-function ProjectEvec!(ϕ, X, Y)
+function ProjectEvec!(ϕ, X, Y; EV = [])
     # renormalises state to allow it to slowly project onto the leading eigenvector 
     # modifies in place, replacing the existing state with one that has the perturbation normalised
     # returns the normalised perturbation 
     # also returns a flag if it 'converged' correctly (original norm close to target norm)
+    # optional argument to first subtract projections onto each eigenvector in EV
     ZZ = hcat(ϕ, X, Y) # full state 
     dZZ = ZZ .- ZZ0; # change in state 
-    dZZmag = dZZ[:,1].^2 .+ (dZZ[:,2]./r).^2 .+ (dZZ[:,3]./r).^2  # length Ndisc; Δϕ^2 + (ΔX/R)^2 for each s
-    globalNorm = sqrt(integrateSdom(dZZmag .* volEl)); # norm over entire domain
+    for ev in EV
+        coeff = inp(dZZ, ev) / inp(ev, ev); # coefficient of projection 
+        dZZ .-= coeff .* ev; # subtract projection
+    end
+    globalNorm = inp(dZZ, dZZ); # norm over entire domain 
     # println("Global norm: $(round(globalNorm, digits = 4))") 
     targetNorm = 6; # target norm 
     projRes = ( (globalNorm / targetNorm) <= 10 ) 
@@ -580,7 +592,7 @@ function TroubleshootSphericalHarmonics()
 
     for i = 1:1000;
         res = UpdateMorphogen!(ϕ, X, Y, ϵsq);
-        (dZZ, projRes) = ProjectEvec!(ϕ, X, Y) 
+        (dZZ, projRes) = ProjectEvec!(ϕ, X, Y);
         dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; 
     end
     plt = visShape(ϕ, X, Y, "After diffusion eigenfinding"); display(plt); savefig(plt,"testSphHm-shapeAF.png")
