@@ -108,3 +108,22 @@ function TroubleshootSPHM2()
 
     plt = plot(Si, ϕ); plot!(Si, ϕ2); plot!(Si, ϕ3); display(plt);
 end
+
+
+function TroubleshootICs()
+    ## computing initial states as numerical optimisers not analytic optimisers 
+    # resultNumShape = optimize(x -> EFwrapped(x, ϕ0), 
+    #                     [X0; Y0], 
+    #                     # lbounds, ubounds, Fminbox(GradientDescent()),
+    #                     method = LBFGS(), 
+    #                     autodiff = :forward, iterations = 100000);  # 15000 or 100 000
+    # fullXnum = resultNumShape.minimizer;
+    # X0num = fullXnum[1:Ndisc]; Y0num = fullXnum[Ndisc+1:end];
+
+    # resultNumPhi = optimize(ϕ -> MorphogenFunctional(ϕ, ϕ0, X0num, Y0num, ϵ0), 
+    #                     ϕ0, method = LBFGS(), 
+    #                     autodiff = :forward, iterations = 1000); 
+    # ϕ0num = resultNumPhi.minimizer;
+
+    # ZZ0 = hcat(ϕ0num, X0num, Y0num);
+end

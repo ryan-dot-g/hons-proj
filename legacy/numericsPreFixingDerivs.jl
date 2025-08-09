@@ -19,7 +19,6 @@
 
 using LinearAlgebra, DifferentialEquations, Plots, LaTeXStrings;
 using Optim, ForwardDiff;
-using JLD2;
 println("running...");
 
 ############ -------------------------------------------------- ############
@@ -53,7 +52,7 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on s (40)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.03) 
-tmax = 500*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
+tmax = 2*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
@@ -119,7 +118,6 @@ FDCT(J) = diff(J)/ds; # centered first derivative
 
 # integral over total s domain, using trapezoid rule
 integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
-integrateSdomCt(QtyCt) = Ndisc/(Ndisc-1) * integrateSdom(QtyCt); # centered needs correction
 
 # inner product for eigenvector calculation 
 inp(ZZ1, ZZ2) = integrateSdom((ZZ1[:,1].*ZZ2[:,1] .+ ZZ1[:,2].*ZZ2[:,2]/r^2 
@@ -129,11 +127,8 @@ inp(ZZ1, ZZ2) = integrateSdom((ZZ1[:,1].*ZZ2[:,1] .+ ZZ1[:,2].*ZZ2[:,2]/r^2
 ############ ------------- PRESAVING CALCULATIONS ------------- ############
 ############ -------------------------------------------------- ############
 CosS = cos.(Si); SinS = sin.(Si); # presaving trigs 
-volEl = R0^2 * CosS; # volume element
-
-# centered versions
 CosSCt = cos.(SiCt);
-volElCt = R0^2 * CosSCt;
+volEl = R0^2 * CosS; # volume element
 
 ############ -------------------------------------------------- ############
 ############ -------- STEADY-STATE / INITIAL FUNCTIONS -------- ############
@@ -538,7 +533,7 @@ runAnim = true;
 
 dZZ = zeros(Ndisc, 3); 
 
-runsim = true;
+runsim = false;
 tstart = time();
 if runsim
     global ϵsq; 
@@ -615,34 +610,30 @@ if runsim
 
     # pltLE = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, trStrSq(X, Y, Xdash, Ydash));
     # display(pltLE); savefig(pltLE, "leadingEvec.png")
-
-    # EV1 = hcat(ϕ, X, Y);
-    # @save "EV1//EV1.jld2" EV1
-    # @load "EV1//EV1.jld2" EV1
 end
 
 
 ############ -------------------------------------------------- ############
 ############ ---------------- TROUBLESHOOTING FULL STEPS ------------------ ############
 ############ -------------------------------------------------- ############
-# X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
-# X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
-# ϕ .= ϕ0topBump;
+X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
+X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
+ϕ .= ϕ0topBump;
 
-# shapeRes_test = UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
-# plt = visShape(ϕ, X, Y, "shape"); display(plt)
-# plt = visDeform(ϕ, X, Y); display(plt);
-# # plt = plot(FDX(X.-X0), FDY(Y.-Y0)); display(plt);
+shapeRes_test = UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
+plt = visShape(ϕ, X, Y, "shape"); display(plt)
+plt = visDeform(ϕ, X, Y); display(plt);
+# plt = plot(FDX(X.-X0), FDY(Y.-Y0)); display(plt);
 
-# # Step A2: compute new strain tensor squared 
-# ϵsq = trStrSq(X, Y, Xdash, Ydash); 
+# Step A2: compute new strain tensor squared 
+ϵsq = trStrSq(X, Y, Xdash, Ydash); 
 
-# # Step A3: evolve morphogen
-# morphRes_test = UpdateMorphogen!(ϕ, X, Y, ϵsq);
-# # plt = plot(Si, ϕ.-ϕ0); display(plt);
+# Step A3: evolve morphogen
+morphRes_test = UpdateMorphogen!(ϕ, X, Y, ϵsq);
+# plt = plot(Si, ϕ.-ϕ0); display(plt);
 
-# # Step B1: project onto eigenvector 
-# (dZZ_test, projRes_test) = ProjectEvec!(ϕ, X, Y);
+# Step B1: project onto eigenvector 
+(dZZ_test, projRes_test) = ProjectEvec!(ϕ, X, Y);
 
 
 
