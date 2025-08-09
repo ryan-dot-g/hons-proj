@@ -38,7 +38,7 @@ h = 20.0 # bilayer thickness (20). NOTE: this interacts with Ω
 b = 5.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
 κ = 0.0; # TODO morphogen stress upregulation coefficient (1 for now) # SPHERHARM
 ζ = 0.0; # morphogen decay rate (0.2) # SPHERHARM
-D = 1000.0; # morphogen diffusion coefficient (0.01) # SPHERHARM
+D = 4000.0; # morphogen diffusion coefficient (0.01) # SPHERHARM
 
 # PARAM SETS OF NOTE: 
 # - (A) 
@@ -120,8 +120,8 @@ FDCT(J) = diff(J)/ds; # centered first derivative
 integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
 
 # inner product for eigenvector calculation 
-inp(ZZ1, ZZ2) = sqrt(integrateSdom((ZZ1[:,1].*ZZ2[:,1] .+ ZZ1[:,2].*ZZ2[:,2]/r^2 
-                    .+ ZZ1[:,3].*ZZ2[:,3]/r^2 ) .* volEl)) 
+inp(ZZ1, ZZ2) = integrateSdom((ZZ1[:,1].*ZZ2[:,1] .+ ZZ1[:,2].*ZZ2[:,2]/r^2 
+                    .+ ZZ1[:,3].*ZZ2[:,3]/r^2 ) .* volEl)
 
 ############ -------------------------------------------------- ############
 ############ ------------- PRESAVING CALCULATIONS ------------- ############
@@ -328,7 +328,7 @@ end
 ############ -------------------------------------------------- ############
 ############ --------------- EIGENVECTOR STEPS ---------------- ############
 ############ -------------------------------------------------- ############
-function ProjectEvec!(ϕ, X, Y; EV = [])
+function ProjectEvec!(ϕ, X, Y; EVs = [])
     # renormalises state to allow it to slowly project onto the leading eigenvector 
     # modifies in place, replacing the existing state with one that has the perturbation normalised
     # returns the normalised perturbation 
@@ -336,11 +336,12 @@ function ProjectEvec!(ϕ, X, Y; EV = [])
     # optional argument to first subtract projections onto each eigenvector in EV
     ZZ = hcat(ϕ, X, Y) # full state 
     dZZ = ZZ .- ZZ0; # change in state 
-    for ev in EV
+    for ev in EVs # subtract projection onto each existing eigenvector 
         coeff = inp(dZZ, ev) / inp(ev, ev); # coefficient of projection 
         dZZ .-= coeff .* ev; # subtract projection
     end
-    globalNorm = inp(dZZ, dZZ); # norm over entire domain 
+    
+    globalNorm = sqrt(inp(dZZ, dZZ)); # norm over entire domain 
     # println("Global norm: $(round(globalNorm, digits = 4))") 
     targetNorm = 6; # target norm 
     projRes = ( (globalNorm / targetNorm) <= 10 ) 
@@ -387,8 +388,12 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 ϕ0bottomBump = -α_morph*ϕ0tempBottom .+ (1-α_morph)*ϕ0; 
 
 # double bump 
-ϕ0tempDouble = zeros(Ndisc) .+ sin.(4*Si).^2 * ϕ0sc .+ ϕ0sc;
+ϕ0tempDouble = zeros(Ndisc) .+ sin.(2*Si).^2 * ϕ0sc .+ ϕ0sc;
 ϕ0doubleBump = α_morph*ϕ0tempDouble .+ (1-α_morph)*ϕ0;
+
+# very random not odd or even 
+ϕ0tempBumpy = zeros(Ndisc) .+ (sin.(4*Si).^2 .+ 5*cos.(Si .+ 0.5) .+ 3 )/8 * ϕ0sc;
+ϕ0bumpy = α_morph * ϕ0tempBumpy .+ (1-α_morph)*ϕ0;
 
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
@@ -515,90 +520,6 @@ function postPlot(Tn, ϕtot, ϵtot, Ncutoff)
     return plt;
 end
 
-############ -------------------------------------------------- ############
-############ --------------- CHECKING FORMULAS ---------------- ############
-############ -------------------------------------------------- ############
-checkFormulas = false
-if checkFormulas 
-    X = r * CosS; Y = r * SinS; 
-    Xdash = FDX(X); Ydash = FDY(Y); 
-
-    # check trace of strain tensor calc (CHECKED)
-    en = trStrSq(X, Y, Xdash, Ydash); 
-    # println(maximum( abs.(en .- trStrSq0) )); 
-
-    # check first-derivative matrix (CHECKED)
-    # error on bdy is about double error on interior, but still scales with ds as expected
-    XdashTrue = - r * SinS;
-    # println(XdashTrue .- Xdash);
-    # println(maximum( abs.(XdashTrue .- Xdash) ));
-
-    # check second-derivative matrix (CHECKED)
-    # error on bdy is much (10^6) higher than error on interior but does scale well 
-    Xddash = Q*X;
-    XddashTrue = -X;
-    println(XddashTrue .- Xddash);
-    println(maximum( abs.(XddashTrue .- Xddash) ));
-end
-
-############ -------------------------------------------------- ############
-############ ---------------- TROUBLESHOOTING FNS ------------------ ############
-############ -------------------------------------------------- ############
-function TroubleshootMorphUpdates()
-    # wrapper to test morphogen updates on a nonuniform shape 
-    X .= X0test; Y .= Y0test; Xdash .= X0testDash; Ydash .= Y0testDash
-    ϕ .= ϕ0;
-    plt = visShape(ϕ, X, Y,"Before morphogen updates"); display(plt); savefig(plt,"testMorph-shapeB4.png")
-    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
-    plt = visQtys(ϕ, ϵsq, "Before morphogen updates"); display(plt); savefig(plt, "testMorph-morphB4.png")
-
-    # ϵsqtot = ElEn(ϕ, X, Y, Xdash, Ydash)
-    # println("Elastic energy: ", ϵsqtot)
-    # println("Total volume energy: ", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
-
-    for i = 1:100;
-        res = UpdateMorphogen!(ϕ, X, Y, ϵsq);
-    end
-    plt = visShape(ϕ, X, Y, "After morphogen updates"); display(plt); savefig(plt,"testMorph-shapeAF.png")
-    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
-    plt = visQtys(ϕ, ϵsq, "After morphogen updates"); display(plt); savefig(plt,"testMorph-morphAF.png")
-end
-
-function TroubleshootShapeUpdates()
-    # code wrapper for when shape updates need to be tested/plotted 
-    X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
-    ϕ .= ϕ0doubleBump;
-    plt = visShape(ϕ, X, Y,"Before shape update"); display(plt); savefig(plt,"testShape-shapeB4.png")
-    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
-    plt = visQtys(ϕ, ϵsq, "Before shape update"); display(plt); savefig(plt, "testShape-morphB4.png")
-
-    # ϵsqtot = ElEn(ϕ, X, Y, Xdash, Ydash)
-    # println("Elastic energy: ", ϵsqtot)
-    # println("Total volume energy: ", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
-
-    res = UpdateShape!(ϕ, X, Y, Xdash, Ydash)
-    plt = visShape(ϕ, X, Y, "After shape update"); display(plt); savefig(plt,"testShape-shapeAF.png")
-    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
-    plt = visQtys(ϕ, ϵsq, "After shape update"); display(plt); savefig(plt,"testShape-morphAF.png")
-end
-
-function TroubleshootSphericalHarmonics()
-    # code wrapper to get spherical harmonics from diffusion 
-    X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
-    ϕ .= ϕ0doubleBump;
-    plt = visShape(ϕ, X, Y,"Before diffusion eigenfinding"); display(plt); savefig(plt,"testSphHm-shapeB4.png")
-    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
-    plt = visQtys(ϕ, ϵsq, "Before diffusion eigenfinding", plotE = false); display(plt); savefig(plt, "testSphHm-morphB4.png")
-
-    for i = 1:1000;
-        res = UpdateMorphogen!(ϕ, X, Y, ϵsq);
-        (dZZ, projRes) = ProjectEvec!(ϕ, X, Y);
-        dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; 
-    end
-    plt = visShape(ϕ, X, Y, "After diffusion eigenfinding"); display(plt); savefig(plt,"testSphHm-shapeAF.png")
-    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
-    plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false, plotTrig = true); display(plt); savefig(plt,"testSphHm-morphAF.png")
-end
 
 ############ -------------------------------------------------- ############
 ############ ---------------- TIME EVOLUTION ------------------ ############
@@ -738,15 +659,24 @@ end
 ############ -------------------------------------------------- ############
 
 X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
-ϕ .= ϕ0doubleBump;
+ϕ .= ϕ0bumpy;
+ϕ2 = ϕ*0 .+ ϕ0bumpy; 
+ϕ3 = ϕ*0 .+ ϕ0bumpy;
 ϵsq = trStrSq(X, Y, Xdash, Ydash); 
 plt = visQtys(ϕ, ϵsq, "Before diffusion eigenfinding", plotE = false); display(plt);
 
-for i = 1:1000;
+for i = 1:3000;
     rest = UpdateMorphogen!(ϕ, X, Y, ϵsq);
     (dZZt, projRes) = ProjectEvec!(ϕ, X, Y) 
     dϕ = dZZt[:,1]; dX = dZZt[:,2]; dY = dZZt[:,3]; 
+
+    UpdateMorphogen!(ϕ2, X, Y, ϵsq);
+    (dZZt2, projRes2) = ProjectEvec!(ϕ2, X, Y; EVs = [dZZt])
+
+    UpdateMorphogen!(ϕ3, X, Y, ϵsq);
+    (dZZt3, projRes3) = ProjectEvec!(ϕ3, X, Y; EVs = [dZZt, dZZt2])
 end
 ϵsq = trStrSq(X, Y, Xdash, Ydash); 
 plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false); display(plt); 
 
+plt = plot(Si, ϕ); plot!(Si, ϕ2); plot!(Si, ϕ3); display(plt);
