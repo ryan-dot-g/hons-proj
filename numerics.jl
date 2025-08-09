@@ -2,7 +2,7 @@
 # SHORT TERM:
 # - 
 # LONG TERM:
-# - Find second eigenvalue 
+# - 
 
 # *** DESCRIPTION OF THE PROBLEM *** #
 # Y-Y0 starts to buckle at the poles. This is basically because of boundary conditions on Y:
@@ -36,9 +36,9 @@ r = 160; # radius of initial condition sphere (160 for now)
 E0 = 440.0; # base Young's modulus (440). NOTE: this interacts with Ω
 h = 20.0 # bilayer thickness (20). NOTE: this interacts with Ω
 b = 5.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
-κ = 0.0; # TODO morphogen stress upregulation coefficient (1 for now) # SPHERHARM
-ζ = 0.0; # morphogen decay rate (0.2) # SPHERHARM
-D = 4000.0; # morphogen diffusion coefficient (0.01) # SPHERHARM
+κ = 1.0; # TODO morphogen stress upregulation coefficient (1 for now)  
+ζ = 0.2; # morphogen decay rate (0.2)  
+D = 1000.0; # morphogen diffusion coefficient (0.01) # SPHERHARM
 
 # PARAM SETS OF NOTE: 
 # - (A) 
@@ -51,7 +51,7 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 ############ -------------------------------------------------- ############
 Ndisc = 40; # number of discretisation points on s (40)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
-dt = 0.003; # time discretisation (0.03) # SPHERHARM
+dt = 0.03; # time discretisation (0.03) 
 tmax = 2*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
@@ -552,7 +552,6 @@ dZZ = zeros(Ndisc, 3);
 runsim = false;
 tstart = time();
 if runsim
-
     global ϵsq; 
     global dZZ; 
     SaveData!(0, ϕ, X, Y, Xdash, Ydash, ϵsq,
@@ -658,25 +657,4 @@ end
 ############ ---------------- OTHER TESTING CODE ------------------ ############
 ############ -------------------------------------------------- ############
 
-X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
-ϕ .= ϕ0bumpy;
-ϕ2 = ϕ*0 .+ ϕ0bumpy; 
-ϕ3 = ϕ*0 .+ ϕ0bumpy;
-ϵsq = trStrSq(X, Y, Xdash, Ydash); 
-plt = visQtys(ϕ, ϵsq, "Before diffusion eigenfinding", plotE = false); display(plt);
 
-for i = 1:3000;
-    rest = UpdateMorphogen!(ϕ, X, Y, ϵsq);
-    (dZZt, projRes) = ProjectEvec!(ϕ, X, Y) 
-    dϕ = dZZt[:,1]; dX = dZZt[:,2]; dY = dZZt[:,3]; 
-
-    UpdateMorphogen!(ϕ2, X, Y, ϵsq);
-    (dZZt2, projRes2) = ProjectEvec!(ϕ2, X, Y; EVs = [dZZt])
-
-    UpdateMorphogen!(ϕ3, X, Y, ϵsq);
-    (dZZt3, projRes3) = ProjectEvec!(ϕ3, X, Y; EVs = [dZZt, dZZt2])
-end
-ϵsq = trStrSq(X, Y, Xdash, Ydash); 
-plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false); display(plt); 
-
-plt = plot(Si, ϕ); plot!(Si, ϕ2); plot!(Si, ϕ3); display(plt);

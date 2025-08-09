@@ -82,3 +82,29 @@ function TroubleshootSphericalHarmonics()
     ϵsq = trStrSq(X, Y, Xdash, Ydash); 
     plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false, plotTrig = true); display(plt); savefig(plt,"testSphHm-morphAF.png")
 end
+
+function TroubleshootSPHM2()
+    # better, finds all evals and evecs 
+    X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
+    ϕ .= ϕ0bumpy;
+    ϕ2 = ϕ*0 .+ ϕ0bumpy; 
+    ϕ3 = ϕ*0 .+ ϕ0bumpy;
+    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
+    plt = visQtys(ϕ, ϵsq, "Before diffusion eigenfinding", plotE = false); display(plt);
+
+    for i = 1:3000;
+        rest = UpdateMorphogen!(ϕ, X, Y, ϵsq);
+        (dZZt, projRes) = ProjectEvec!(ϕ, X, Y);
+        dϕ = dZZt[:,1]; dX = dZZt[:,2]; dY = dZZt[:,3]; 
+
+        UpdateMorphogen!(ϕ2, X, Y, ϵsq);
+        (dZZt2, projRes2) = ProjectEvec!(ϕ2, X, Y; EVs = [dZZt]);
+
+        UpdateMorphogen!(ϕ3, X, Y, ϵsq);
+        (dZZt3, projRes3) = ProjectEvec!(ϕ3, X, Y; EVs = [dZZt2, dZZt]);
+    end
+    ϵsq = trStrSq(X, Y, Xdash, Ydash); 
+    plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false); display(plt); 
+
+    plt = plot(Si, ϕ); plot!(Si, ϕ2); plot!(Si, ϕ3); display(plt);
+end
