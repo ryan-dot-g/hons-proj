@@ -1,5 +1,5 @@
-EV1 - phi0topbump
-EV1_reverse - phi0bumpy
-EV2 - phi0
-None of these required any vector orthogs
+EV1 - phi0topbump, no orthogs
+EV1r (reverse) - phi0bumpy, no orthogs
+EV2side - phi0bumpy, [EV1r] OR phi0sidebump, no orthogs. They get the same result!! phi0sidebump, no orthogs also called EV2
+
 

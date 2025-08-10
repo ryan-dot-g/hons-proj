@@ -54,12 +54,11 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on s (40)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.03) 
-tmax = 400*dt; # max time (400 * dt for evec). Sims dont really get here tho 
+tmax = 1000*dt; # max time (400 * dt for evec). Sims dont really get here tho 
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
 # dsint = (π/Ndisc)/2;
-αEvec = 2; # how much to plot the eigenvector (1 to plot it once)
 maxIter = 15000; # iteratinos for the shape update (v expensive), 15000 usually 
 
 cfl = 2 * D * dt / (π/Ndisc)^2; # cfl condition for diffusion, checking sensible. ds is approximate 
@@ -70,6 +69,7 @@ cfl = 2 * D * dt / (π/Ndisc)^2; # cfl condition for diffusion, checking sensibl
 ############ -------------------------------------------------- ############
 plotRes = 1; # how many timesteps per plot (Inf for just 1st and last plots)
 cmap = cgrad(:viridis); # colormap for morphogen concentration 
+αEvec = 2; # factor to plot the eigenvector (1 to plot it exactly as seen) (2)
 
 ############ -------------------------------------------------- ############
 ############ ---------------- NUMERICAL SETUP ----------------- ############
@@ -238,8 +238,9 @@ end
 function EFwrapped(fullData, Eϕ)
     # wrapper for the energy functional. Unpacks the data, computes derivatives, then
     # returns the energy functional to optimise 
-    # trying to minimise extra space allocations 
-    return EnergyFunctional(Eϕ, fullData[1:Ndisc], fullData[Ndisc+1:end], FDX(X), FDY(Y));
+    # trying to minimise extra space allocations
+    return EnergyFunctional(Eϕ, fullData[1:Ndisc], fullData[Ndisc+1:end], # X, Y 
+                                FDX(fullData[1:Ndisc]), FDY(fullData[Ndisc+1:end]));
 end
 
 function MorphogenFunctional(ϕ, ϕn, X, Y, ϵsq)
@@ -540,12 +541,17 @@ runAnim = true;
 
 dZZ = zeros(Ndisc, 3); 
 
-# load evec to project off 
-@load "EVs//EV1_reverse.jld2" EV1_reverse;
-dEV1r = EV1_reverse .- ZZ0; # the difference to steady state 
+# load evecs to project off 
+@load "EVs//EV1r.jld2" EV1r;
+dEV1r = EV1r .- ZZ0; # the difference to steady state 
 dEV1rNorm = inp(dEV1r, dEV1r);
+@load "EVs//EV2side.jld2" EV2side;
+dEV2side = EV2side .- ZZ0; 
+dEV2sideNorm = inp(dEV2side, dEV2side);
 
 runsim = true;
+doProj = true; # whether to project vs just do time evolution 
+
 tstart = time();
 if runsim
     global ϵsq; 
@@ -566,9 +572,10 @@ if runsim
         morphRes = UpdateMorphogen!(ϕ, X, Y, ϵsq);
 
         # Step B1: project onto eigenvector 
-        # activateforProjEv
-        (dZZ, projRes) = ProjectEvec!(ϕ, X, Y; dEVs = [], dEVnorms = []) 
-        dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # Unpack # activateforProjEv
+        if doProj
+            (dZZ, projRes) = ProjectEvec!(ϕ, X, Y; dEVs = [dEV2side, dEV1r], dEVnorms = [dEV2sideNorm, dEV1rNorm]) 
+            dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # unpack 
+        end
 
         # Step C1: save necessary data 
         SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵsq,
@@ -576,16 +583,19 @@ if runsim
 
         # Step C2: visualise 
         tstr = round(t, digits = 2); 
-        frameFullAnim = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, ϵsq,"t = $tstr"); # activateforProjEv
-        frameShapeAnim = visShape(ϕ.+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, "t = $tstr"); # activateforProjEv
-        # frameFullAnim = visualise(ϕ, X, Y, ϵsq,"t = $tstr");
-        # frameShapeAnim = visShape(ϕ, X, Y, "t = $tstr");
+        if doProj
+            frameFullAnim = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, ϵsq,"t = $tstr"); 
+            frameShapeAnim = visShape(ϕ.+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, "t = $tstr"); 
+        else
+            frameFullAnim = visualise(ϕ, X, Y, ϵsq,"t = $tstr");
+            frameShapeAnim = visShape(ϕ, X, Y, "t = $tstr");
+        end
         if runAnim
             frame(fullAnim, frameFullAnim)
             frame(shapeAnim, frameShapeAnim) 
         end
 
-        # special code for time evolution. Show some frames, then all info, then blowup frame
+        # special code for getting midyear review plots. Show some frames, then all info, then blowup frame
         # if n in [1, 8, 16, Ntimes-1]
         #     savefig(frameShapeAnim, "$n.png")
         # elseif n == Ntimes-2
@@ -603,10 +613,12 @@ if runsim
             global Ncutoff = n;
             break
         end
-        if !projRes # activteforProjEV 
-            println("Global norm exceeded \n Eigenvector projection failed to converge: Step $n")
-            global Ncutoff = n;
-            break
+        if doProj
+            if !projRes 
+                println("Global norm exceeded \n Eigenvector projection failed to converge: Step $n")
+                global Ncutoff = n;
+                break
+            end
         end
 
         println("$n, $(round(time() - tstart)), $(shapeRes.iterations)") 
@@ -614,7 +626,7 @@ if runsim
     end
 
     # output finish data 
-    println("Total animation time: $(round(time() - tstart)) seconds for $Ncutoff timesteps.")
+    println("Total sim time: $(round(time() - tstart)) seconds for $Ncutoff timesteps.")
 
     # save and plot relevant objects
     mp4(fullAnim, simFP * "/sim_$simName-full.mp4", fps = 4);
@@ -624,9 +636,8 @@ if runsim
     # pltLE = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, trStrSq(X, Y, Xdash, Ydash));
     # display(pltLE); savefig(pltLE, "leadingEvec.png")
 
-    # EV2 = hcat(ϕ, X, Y);
-    # @save "EVs//EV2.jld2" EV2
-    # @load "EVs//EV2.jld2" EV2
+    # EV1r = hcat(ϕ, X, Y);
+    # @save "EVs//EV1r.jld2" EV1r;
 end
 
 
