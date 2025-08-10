@@ -59,7 +59,7 @@ function TroubleshootShapeUpdates()
     # println("Elastic energy: ", ϵsqtot)
     # println("Total volume energy: ", Ω * (VolInt(X, Y, Xdash, Ydash) - V0)^2)
 
-    res = UpdateShape!(ϕ, X, Y, Xdash, Ydash)
+    res = UpdateShape!(E.(ϕ), X, Y, Xdash, Ydash)
     plt = visShape(ϕ, X, Y, "After shape update"); display(plt); savefig(plt,"testShape-shapeAF.png")
     ϵsq = trStrSq(X, Y, Xdash, Ydash); 
     plt = visQtys(ϕ, ϵsq, "After shape update"); display(plt); savefig(plt,"testShape-morphAF.png")

@@ -17,7 +17,8 @@
 #       (C) Manual enforcement also for Y0, so that (Y-Y0)' also vanishes at the poles. 
 
 
-using LinearAlgebra, DifferentialEquations, Plots, LaTeXStrings;
+using LinearAlgebra, DifferentialEquations, BandedMatrices;
+using Plots, LaTeXStrings;
 using Optim, ForwardDiff;
 using JLD2;
 println("running...");
@@ -53,12 +54,13 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on s (40)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.03) 
-tmax = 500*dt; # max time (5e2 * dt for evec). Sims dont really get here tho
+tmax = 40*dt; # max time (5e2 * dt for evec). Sims dont really get here tho # 400
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
 # dsint = (π/Ndisc)/2;
 αEvec = 2; # how much to plot the eigenvector (1 to plot it once)
+maxIter = 15000; # iteratinos for the shape update (v expensive), 15000 usually 
 
 cfl = 2 * D * dt / (π/Ndisc)^2; # cfl condition for diffusion, checking sensible. ds is approximate 
 # println("CFL number (should be <<1): $(round(cfl, digits = 5))")
@@ -116,6 +118,9 @@ Py = Px;
 FDX(J) = Px*J;
 FDY(J) = Py*J;
 FDCT(J) = diff(J)/ds; # centered first derivative
+
+# attempting speedup with pre-allocated mmuls 
+
 
 # integral over total s domain, using trapezoid rule
 integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
@@ -178,9 +183,9 @@ function trStrSq(X, Y, Xdash, Ydash)
     return 1/(4*R0^4) * (t1.^2 .+ t2.^2); 
 end
 
-function ElEn(ϕ, X, Y, Xdash, Ydash)
+function ElEn(Eϕ, X, Y, Xdash, Ydash)
     # Elastic energy functional 
-    fn = E.(ϕ)/2 .* trStrSq(X, Y, Xdash, Ydash) .* volEl; # integrand over S0 including volel
+    fn = Eϕ/2 .* trStrSq(X, Y, Xdash, Ydash) .* volEl; # integrand over S0 including volel
     return integrateSdom(fn); 
 end
 
@@ -225,20 +230,20 @@ function Friction(X, Y)
     return sum(ΔX.^2 + ΔY.^2);
 end
 
-function EnergyFunctional(ϕ, X, Y, Xdash, Ydash)
+function EnergyFunctional(Eϕ, X, Y, Xdash, Ydash)
     # total energy functional, including elastic energy and a punishing potential and surface friction
-    return ElEn(ϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Ydash) - V0)^2 +
+    return ElEn(Eϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Ydash) - V0)^2 +
                 ω * SurfaceFriction(X, Y) + 
                 κ_fric * Friction(X, Y) + 
                 κ_bend * (BendingPenalty(X) + BendingPenalty(Y));
 end
 
-function EFwrapped(fullData, ϕ)
+function EFwrapped(fullData, Eϕ)
     # wrapper for the energy functional. Unpacks the data, computes derivatives, then
     # returns the energy functional to optimise 
     X = fullData[1:Ndisc]; Y = fullData[Ndisc+1:end];
     Xdash = FDX(X); Ydash = FDY(Y);
-    return EnergyFunctional(ϕ, X, Y, Xdash, Ydash);
+    return EnergyFunctional(Eϕ, X, Y, Xdash, Ydash);
 end
 
 function MorphogenFunctional(ϕ, ϕn, X, Y, ϵsq)
@@ -267,7 +272,7 @@ function Renormalise!(X, Y, Xdash, Ydash, V0)
     Xdash .= Xdash * normk; Ydash .= Ydash * normk;
 end 
 
-function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
+function UpdateShape!(Eϕ, X, Y, Xdash, Ydash)
     # takes the current state data (shape and morphogen concentration), and updates X, Y 
     # and derivatives IN PLACE, by minimising the energy functional 
     # returns results of the optim
@@ -276,11 +281,11 @@ function UpdateShape!(ϕ, X, Y, Xdash, Ydash)
     lbounds = [dsint * 0.9; Vector(1:Ndisc-2)*-Inf; dsint*0.9; Vector(1:Ndisc)*-Inf ];
     ubounds = [dsint * 1.1; Vector(1:Ndisc-2)*Inf; dsint*1.1; Vector(1:Ndisc)*Inf];
     
-    result = optimize(x -> EFwrapped(x, ϕ), 
+    result = optimize(x -> EFwrapped(x, Eϕ), 
                     [X; Y], 
                     # lbounds, ubounds, Fminbox(GradientDescent()),
                     method = LBFGS(), 
-                    autodiff = :forward, iterations = 15000);  # 15000 or 100 000
+                    autodiff = :forward, iterations = maxIter);  
     fullX = result.minimizer;
     X .= fullX[1:Ndisc]; Y .= fullX[Ndisc+1:end];
 
@@ -317,17 +322,18 @@ end
 ############ -------------------------------------------------- ############
 ############ --------------- EIGENVECTOR STEPS ---------------- ############
 ############ -------------------------------------------------- ############
-function ProjectEvec!(ϕ, X, Y; EVs = [])
+function ProjectEvec!(ϕ, X, Y; dEVs = [], dEVnorms = [])
     # renormalises state to allow it to slowly project onto the leading eigenvector 
     # modifies in place, replacing the existing state with one that has the perturbation normalised
     # returns the normalised perturbation 
     # also returns a flag if it 'converged' correctly (original norm close to target norm)
     # optional argument to first subtract projections onto each eigenvector in EV
+    # takes the deviation from steady-state, not the full state/
     ZZ = hcat(ϕ, X, Y) # full state 
     dZZ = ZZ .- ZZ0; # change in state 
-    for ev in EVs # subtract projection onto each existing eigenvector 
-        coeff = inp(dZZ, ev) / inp(ev, ev); # coefficient of projection 
-        dZZ .-= coeff .* ev; # subtract projection
+    for (dEv, dEvnorm) in zip(dEVs, dEVnorms) # subtract projection onto each existing eigenvector 
+        coeff = inp(dZZ, dEv) / dEvnorm; # coefficient of projection 
+        dZZ .-= coeff .* dEv; # subtract projection
     end
     
     globalNorm = sqrt(inp(dZZ, dZZ)); # norm over entire domain 
@@ -521,10 +527,11 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 
 # now morphogen array
 ϕ = zeros(Ndisc);
-ϕ .= ϕ0topBump;  
+# ϕ .= ϕ0topBump;  
 # ϕ .= ϕ0sideBump;
 # ϕ .= ϕ0bottomBump;
-# ϕ .= ϕ0doubleBump;
+ϕ .= ϕ0doubleBump;
+# ϕ .= ϕ0bumpy;
 # ϕ .= ϕ0; 
 
 # save initial strain squared
@@ -538,6 +545,11 @@ runAnim = true;
 
 dZZ = zeros(Ndisc, 3); 
 
+# load evec to project off 
+@load "EVs//EV1_reverse.jld2" EV1_reverse;
+dEV1r = EV1_reverse .- ZZ0; # the difference to steady state 
+dEV1rNorm = inp(dEV1r, dEV1r);
+
 runsim = true;
 tstart = time();
 if runsim
@@ -550,7 +562,7 @@ if runsim
         t = Tn[n];
 
         # Step A1: update shape of X(s), Y(s) and derivatives 
-        shapeRes = UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
+        shapeRes = UpdateShape!(E.(ϕ), X, Y, Xdash, Ydash); 
 
         # Step A2: compute new strain tensor squared 
         ϵsq = trStrSq(X, Y, Xdash, Ydash); 
@@ -559,7 +571,8 @@ if runsim
         morphRes = UpdateMorphogen!(ϕ, X, Y, ϵsq);
 
         # Step B1: project onto eigenvector 
-        (dZZ, projRes) = ProjectEvec!(ϕ, X, Y) # activateforProjEv
+        # activateforProjEv
+        (dZZ, projRes) = ProjectEvec!(ϕ, X, Y; dEVs = [], dEVnorms = []) 
         dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # Unpack # activateforProjEv
 
         # Step C1: save necessary data 
@@ -616,9 +629,9 @@ if runsim
     # pltLE = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, trStrSq(X, Y, Xdash, Ydash));
     # display(pltLE); savefig(pltLE, "leadingEvec.png")
 
-    # EV1 = hcat(ϕ, X, Y);
-    # @save "EV1//EV1.jld2" EV1
-    # @load "EV1//EV1.jld2" EV1
+    # EV2 = hcat(ϕ, X, Y);
+    # @save "EVs//EV2.jld2" EV2
+    # @load "EVs//EV2.jld2" EV2
 end
 
 
@@ -629,7 +642,7 @@ end
 # X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 # ϕ .= ϕ0topBump;
 
-# shapeRes_test = UpdateShape!(ϕ, X, Y, Xdash, Ydash); 
+# shapeRes_test = UpdateShape!(E.(ϕ), X, Y, Xdash, Ydash); 
 # plt = visShape(ϕ, X, Y, "shape"); display(plt)
 # plt = visDeform(ϕ, X, Y); display(plt);
 # # plt = plot(FDX(X.-X0), FDY(Y.-Y0)); display(plt);
