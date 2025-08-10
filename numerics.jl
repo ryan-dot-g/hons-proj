@@ -54,7 +54,7 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on s (40)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.03) 
-tmax = 40*dt; # max time (5e2 * dt for evec). Sims dont really get here tho # 400
+tmax = 400*dt; # max time (400 * dt for evec). Sims dont really get here tho 
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
@@ -119,8 +119,6 @@ FDX(J) = Px*J;
 FDY(J) = Py*J;
 FDCT(J) = diff(J)/ds; # centered first derivative
 
-# attempting speedup with pre-allocated mmuls 
-
 
 # integral over total s domain, using trapezoid rule
 integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
@@ -170,23 +168,22 @@ function trStrSq(X, Y, Xdash, Ydash)
     # takes vectors of the surface parameterisation x(s), y(s) and derivatives w.r.t. s
     # returns a vector containing the trace of the square of the strain tensor at each s
     t1 = (Xdash).^2 .+ (Ydash).^2 .- R0^2;
-    t2 = t1 * 0; 
     # handle boundary different if s coords go all the way to the boundary 
-    if Si[1] == -π/2
-        t2[interior] = X[interior].^2 ./ (CosS[interior].^2); # interior is just x/cos^2 
-        t2[[1,end]] .= r^2; # boundary is when x(s)~r cos(s)
-    else
-        t2 = X.^2 ./ CosS.^2;
-    end
-    t2 = t2 .- R0^2; 
+    # if Si[1] == -π/2
+    #     t2[interior] = X[interior].^2 ./ (CosS[interior].^2); # interior is just x/cos^2 
+    #     t2[[1,end]] .= r^2; # boundary is when x(s)~r cos(s)
+    # else
+    #     t2 = X.^2 ./ CosS.^2;
+    # end
+    # t2 = t2 .- R0^2; 
+    t2 = (X.^2 ./ CosS.^2) .- R0^2;
 
     return 1/(4*R0^4) * (t1.^2 .+ t2.^2); 
 end
 
 function ElEn(Eϕ, X, Y, Xdash, Ydash)
     # Elastic energy functional 
-    fn = Eϕ/2 .* trStrSq(X, Y, Xdash, Ydash) .* volEl; # integrand over S0 including volel
-    return integrateSdom(fn); 
+    return integrateSdom(Eϕ/2 .* trStrSq(X, Y, Xdash, Ydash) .* volEl); # integrand over S0 including volel
 end
 
 function VolInt(X, Ydash)
@@ -233,17 +230,16 @@ end
 function EnergyFunctional(Eϕ, X, Y, Xdash, Ydash)
     # total energy functional, including elastic energy and a punishing potential and surface friction
     return ElEn(Eϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Ydash) - V0)^2 +
-                ω * SurfaceFriction(X, Y) + 
-                κ_fric * Friction(X, Y) + 
-                κ_bend * (BendingPenalty(X) + BendingPenalty(Y));
+                ω * SurfaceFriction(X, Y);
+                # κ_fric * Friction(X, Y) + 
+                # κ_bend * (BendingPenalty(X) + BendingPenalty(Y));
 end
 
 function EFwrapped(fullData, Eϕ)
     # wrapper for the energy functional. Unpacks the data, computes derivatives, then
     # returns the energy functional to optimise 
-    X = fullData[1:Ndisc]; Y = fullData[Ndisc+1:end];
-    Xdash = FDX(X); Ydash = FDY(Y);
-    return EnergyFunctional(Eϕ, X, Y, Xdash, Ydash);
+    # trying to minimise extra space allocations 
+    return EnergyFunctional(Eϕ, fullData[1:Ndisc], fullData[Ndisc+1:end], FDX(X), FDY(Y));
 end
 
 function MorphogenFunctional(ϕ, ϕn, X, Y, ϵsq)
@@ -278,16 +274,15 @@ function UpdateShape!(Eϕ, X, Y, Xdash, Ydash)
     # returns results of the optim
 
     # currently no BCs in the optim, but these could be useful if implemented 
-    lbounds = [dsint * 0.9; Vector(1:Ndisc-2)*-Inf; dsint*0.9; Vector(1:Ndisc)*-Inf ];
-    ubounds = [dsint * 1.1; Vector(1:Ndisc-2)*Inf; dsint*1.1; Vector(1:Ndisc)*Inf];
+    # lbounds = [dsint * 0.9; Vector(1:Ndisc-2)*-Inf; dsint*0.9; Vector(1:Ndisc)*-Inf ];
+    # ubounds = [dsint * 1.1; Vector(1:Ndisc-2)*Inf; dsint*1.1; Vector(1:Ndisc)*Inf];
     
     result = optimize(x -> EFwrapped(x, Eϕ), 
                     [X; Y], 
                     # lbounds, ubounds, Fminbox(GradientDescent()),
                     method = LBFGS(), 
                     autodiff = :forward, iterations = maxIter);  
-    fullX = result.minimizer;
-    X .= fullX[1:Ndisc]; Y .= fullX[Ndisc+1:end];
+    X .= result.minimizer[1:Ndisc]; Y .= result.minimizer[Ndisc+1:end];
 
     # TESTING - ENFORCE BCs; 
     # Y[1] = Y[2];
@@ -530,8 +525,8 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 # ϕ .= ϕ0topBump;  
 # ϕ .= ϕ0sideBump;
 # ϕ .= ϕ0bottomBump;
-ϕ .= ϕ0doubleBump;
-# ϕ .= ϕ0bumpy;
+# ϕ .= ϕ0doubleBump;
+ϕ .= ϕ0bumpy;
 # ϕ .= ϕ0; 
 
 # save initial strain squared
