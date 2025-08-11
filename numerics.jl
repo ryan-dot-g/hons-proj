@@ -54,7 +54,7 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on s (40)
 smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.03) 
-tmax = 1000*dt; # max time (400 * dt for evec). Sims dont really get here tho 
+tmax = 400*dt; # max time (400 * dt for evec). 
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
@@ -398,7 +398,7 @@ function visShape(ϕ, X, Y, titleTxt = false)
     # Plot actual deformed shape, colored by morphogen concentration 
     plt = plot(X, Y, line_z = ϕ, lw = 4, alpha = 0.7,
                 c = cmap, label = "Hydra shape", 
-                aspect_ratio = :equal, legend = :bottomright);
+                aspect_ratio = :equal, legend = :topright);
     plot!(-X, Y, line_z = ϕ, lw = 4, alpha = 0.7,
                 c = cmap, label = "")
 
@@ -458,7 +458,7 @@ function visRdef(ϕ, X, Y)
     Δr = ΔX .* rXu .+ ΔY .* rYu; # dot-product to get scalar radial deflection
 
     # then, plot dr against S 
-    plt = plot(Si, Δr, label = L"\Delta r", lw = 2, line_z = ϕ, c = cmap,
+    plt = plot(Si, Δr, label = L"|\Delta \mathbf{r}|", lw = 2, line_z = ϕ, c = cmap,
                 xlabel = "s", ylabel = "r (μm)", legend = :topleft, colorbar = false,
                 legendfontsize = 14);
     return plt;
@@ -526,8 +526,8 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 # ϕ .= ϕ0topBump;  
 # ϕ .= ϕ0sideBump;
 # ϕ .= ϕ0bottomBump;
-# ϕ .= ϕ0doubleBump;
-ϕ .= ϕ0bumpy;
+ϕ .= ϕ0doubleBump;
+# ϕ .= ϕ0bumpy;
 # ϕ .= ϕ0; 
 
 # save initial strain squared
@@ -545,9 +545,6 @@ dZZ = zeros(Ndisc, 3);
 @load "EVs//EV1r.jld2" EV1r;
 dEV1r = EV1r .- ZZ0; # the difference to steady state 
 dEV1rNorm = inp(dEV1r, dEV1r);
-@load "EVs//EV2side.jld2" EV2side;
-dEV2side = EV2side .- ZZ0; 
-dEV2sideNorm = inp(dEV2side, dEV2side);
 
 runsim = true;
 doProj = true; # whether to project vs just do time evolution 
@@ -573,7 +570,7 @@ if runsim
 
         # Step B1: project onto eigenvector 
         if doProj
-            (dZZ, projRes) = ProjectEvec!(ϕ, X, Y; dEVs = [dEV2side, dEV1r], dEVnorms = [dEV2sideNorm, dEV1rNorm]) 
+            (dZZ, projRes) = ProjectEvec!(ϕ, X, Y; dEVs = [], dEVnorms = []) 
             dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # unpack 
         end
 
@@ -636,9 +633,15 @@ if runsim
     # pltLE = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, trStrSq(X, Y, Xdash, Ydash));
     # display(pltLE); savefig(pltLE, "leadingEvec.png")
 
-    # EV1r = hcat(ϕ, X, Y);
-    # @save "EVs//EV1r.jld2" EV1r;
+    # EV2top = hcat(ϕ, X, Y);
+    # @save "EVs//EV2top.jld2" EV2top;
+    
 end
+# @load "EVs//EV1.jld2" EV1;
+# EV = EV1;
+# pltEVEC = visualise(EV[:,1], EV[:,2], EV[:,3], 
+#                     trStrSq(EV[:,2], EV[:,3], FDX(EV[:,2]), FDX(EV[:,3])), "Eigenvector 1")
+# display(pltEVEC); savefig(pltEVEC, "EVs//EV1.png")
 
 
 ############ -------------------------------------------------- ############

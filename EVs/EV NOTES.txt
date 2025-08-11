@@ -1,5 +1,9 @@
 EV1 - phi0topbump, no orthogs
 EV1r (reverse) - phi0bumpy, no orthogs
-EV2side - phi0bumpy, [EV1r] OR phi0sidebump, no orthogs. They get the same result!! phi0sidebump, no orthogs also called EV2
 
+EV2top - phi0doubleBump, no orthogs
+EV2side - phi0bumpy, [EV1r] **OR** phi0sideBump, no orthogs
 
+EV3r - phi0bumpy, [EV2, EV1r] IN THAT ORDER. Takes 2000 steps with dt=0.03.
+
+Doesnt seem to get further than this.
