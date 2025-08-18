@@ -88,6 +88,12 @@ interior = 2:Ndisc-1; # index set for the interior of the array
 ϕtot = zeros(Ntimes); 
 ϵtot = zeros(Ntimes);
 
+# quantities necessary for 3D 
+Ndisc3D = 100; # discretisation level in 3D
+θ = range(0, 2*π, length = Ndisc3D);
+Cosθ = cos.(θ); Sinθ = sin.(θ);
+
+
 ############ -------------------------------------------------- ############
 ############ ------------- DISCRETISED OPERATORS -------------- ############
 ############ -------------------------------------------------- ############
@@ -511,6 +517,30 @@ function postPlot(Tn, ϕtot, ϵtot, Ncutoff)
     return plt;
 end
 
+function vis3D(X, Y, ϕ, titleTxt = false)
+    # creates and returns a 3D plot created by rotating the (X, Y) parameterised 
+    # surface through 3D space 
+    # first, prepare the shape
+    X3D = [X[i] * Cosθ[j] for i in 1:Ndisc, j in 1:Ndisc3D];
+    Y3D = [Y[i]           for i in 1:Ndisc, j in 1:Ndisc3D];
+    Z3D = [X[i] * Sinθ[j] for i in 1:Ndisc, j in 1:Ndisc3D];
+    ϕ3D = [ϕ[i]           for i in 1:Ndisc, j in 1:Ndisc3D];
+    
+    plt = scatter(vec(X3D), vec(Y3D), vec(Z3D);
+            markersize = 5, marker = :sphere, 
+            markerstrokewidth = 0,
+            zcolor = vec(ϕ3D), colormap = cmap,
+            # clims = (minimum(ϕ3D), maximum(ϕ3D)),
+            camera = (0, 90),
+            xlabel = "x (μm)", ylabel = "y(μm)", zlabel = "z(μm)",
+            legend = false)
+
+    if titleTxt isa String
+        title!(titleTxt)
+    end
+    return plt;
+end
+
 
 ############ -------------------------------------------------- ############
 ############ ---------------- TIME EVOLUTION ------------------ ############
@@ -526,8 +556,8 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 # ϕ .= ϕ0topBump;  
 # ϕ .= ϕ0sideBump;
 # ϕ .= ϕ0bottomBump;
-ϕ .= ϕ0doubleBump;
-# ϕ .= ϕ0bumpy;
+# ϕ .= ϕ0doubleBump;
+ϕ .= ϕ0bumpy;
 # ϕ .= ϕ0; 
 
 # save initial strain squared
@@ -545,6 +575,12 @@ dZZ = zeros(Ndisc, 3);
 @load "EVs//EV1r.jld2" EV1r;
 dEV1r = EV1r .- ZZ0; # the difference to steady state 
 dEV1rNorm = inp(dEV1r, dEV1r);
+@load "EVs//EV2side.jld2" EV2side;
+dEV2side = EV2side .- ZZ0; # the difference to steady state 
+dEV2sideNorm = inp(dEV2side, dEV2side);
+@load "EVs//EV3r.jld2" EV3r;
+dEV3r = EV3r .- ZZ0; # the difference to steady state 
+dEV3rNorm = inp(dEV3r, dEV3r);
 
 runsim = true;
 doProj = true; # whether to project vs just do time evolution 
@@ -570,7 +606,7 @@ if runsim
 
         # Step B1: project onto eigenvector 
         if doProj
-            (dZZ, projRes) = ProjectEvec!(ϕ, X, Y; dEVs = [], dEVnorms = []) 
+            (dZZ, projRes) = ProjectEvec!(ϕ, X, Y; dEVs = [dEV1r, dEV2side, dEV3r], dEVnorms = [dEV1rNorm, dEV2sideNorm, dEV3rNorm]) 
             dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # unpack 
         end
 
