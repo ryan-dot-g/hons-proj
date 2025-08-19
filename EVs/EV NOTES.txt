@@ -1,5 +1,5 @@
-EV1 - phi0topbump, no orthogs
-EV1r (reverse) - phi0bumpy, no orthogs
+EV1 - phi0topbump, no orthogs. 1.0525784992513405
+EV1r (reverse) - phi0bumpy, no orthogs. 1.0525175113094876
 
 EV2top - phi0doubleBump, no orthogs
 EV2side - phi0bumpy, [EV1r] **OR** phi0sideBump, no orthogs

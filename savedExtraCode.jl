@@ -75,7 +75,7 @@ function TroubleshootSphericalHarmonics()
 
     for i = 1:1000;
         res = UpdateMorphogen!(ϕ, X, Y, ϵsq);
-        (dZZ, projRes) = ProjectEvec!(ϕ, X, Y);
+        (dZZ, projRes, evalEst) = ProjectEvec!(ϕ, X, Y);
         dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; 
     end
     plt = visShape(ϕ, X, Y, "After diffusion eigenfinding"); display(plt); savefig(plt,"testSphHm-shapeAF.png")
@@ -94,14 +94,14 @@ function TroubleshootSPHM2()
 
     for i = 1:3000;
         rest = UpdateMorphogen!(ϕ, X, Y, ϵsq);
-        (dZZt, projRes) = ProjectEvec!(ϕ, X, Y);
+        (dZZt, projRes, evalEst) = ProjectEvec!(ϕ, X, Y);
         dϕ = dZZt[:,1]; dX = dZZt[:,2]; dY = dZZt[:,3]; 
 
         UpdateMorphogen!(ϕ2, X, Y, ϵsq);
-        (dZZt2, projRes2) = ProjectEvec!(ϕ2, X, Y; EVs = [dZZt]);
+        (dZZt2, projRes2, evalEst2) = ProjectEvec!(ϕ2, X, Y; EVs = [dZZt]);
 
         UpdateMorphogen!(ϕ3, X, Y, ϵsq);
-        (dZZt3, projRes3) = ProjectEvec!(ϕ3, X, Y; EVs = [dZZt2, dZZt]);
+        (dZZt3, projRes3, evalEst3) = ProjectEvec!(ϕ3, X, Y; EVs = [dZZt2, dZZt]);
     end
     ϵsq = trStrSq(X, Y, Xdash, Ydash); 
     plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false); display(plt); 

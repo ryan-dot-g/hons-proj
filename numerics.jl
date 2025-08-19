@@ -18,7 +18,7 @@
 
 
 using LinearAlgebra, DifferentialEquations, BandedMatrices;
-using Plots, LaTeXStrings;
+using Plots, LaTeXStrings, GLMakie;
 using Optim, ForwardDiff;
 using JLD2;
 println("running...");
@@ -60,6 +60,7 @@ tmax = 400*dt; # max time (400 * dt for evec).
 dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
 # dsint = (π/Ndisc)/2;
 maxIter = 15000; # iteratinos for the shape update (v expensive), 15000 usually 
+lenEvalEst = 10; # how many final iterations to average eigenvalue over 
 
 cfl = 2 * D * dt / (π/Ndisc)^2; # cfl condition for diffusion, checking sensible. ds is approximate 
 # println("CFL number (should be <<1): $(round(cfl, digits = 5))")
@@ -87,11 +88,11 @@ interior = 2:Ndisc-1; # index set for the interior of the array
 # preparing quantities to be saved. Each qty is saved BEFORE and AFTER sim
 ϕtot = zeros(Ntimes); 
 ϵtot = zeros(Ntimes);
+evalEstFull = zeros(lenEvalEst);
 
 # quantities necessary for 3D 
 Ndisc3D = 100; # discretisation level in 3D
 θ = range(0, 2*π, length = Ndisc3D);
-Cosθ = cos.(θ); Sinθ = sin.(θ);
 
 
 ############ -------------------------------------------------- ############
@@ -144,6 +145,9 @@ volEl = R0^2 * CosS; # volume element
 CosSCt = cos.(SiCt);
 volElCt = R0^2 * CosSCt;
 
+# 3D requirement 
+Cosθ = cos.(θ); Sinθ = sin.(θ);
+
 ############ -------------------------------------------------- ############
 ############ -------- STEADY-STATE / INITIAL FUNCTIONS -------- ############
 ############ -------------------------------------------------- ############
@@ -158,14 +162,16 @@ V0 = 4/3 * r^3; # initial volume, normalised by pi
 X0 = r * CosS; Y0 = r * SinS; # initial condition shape 
 X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives 
 
-# --- TESTING --- crude BCs
-# Y0[1] = Y0[2];
-# Y0[end] = Y0[end-1];
-
 Xundef = R0 * CosS; Yundef = R0 * SinS; # undeformed shape
 rXu =  X0 ./ r; rYu =  Y0 ./ r; # radial unit vectors
 
 ZZ0 = hcat(ϕ0, X0, Y0); # full state vector, as Ndisc * 3 matrix 
+
+# -- 3D ICs --- #
+X03D = [X0[i] * Cosθ[j] for i in 1:Ndisc, j in 1:Ndisc3D];
+Y03D = [Y0[i] * 1       for i in 1:Ndisc, j in 1:Ndisc3D];
+Z03D = [X0[i] * Sinθ[j] for i in 1:Ndisc, j in 1:Ndisc3D];
+ϕ03D = [ϕ0[i] * 1       for i in 1:Ndisc, j in 1:Ndisc3D];
 
 ############ -------------------------------------------------- ############
 ############ ------------ FUNCTIONALS AND QTYs --------------- ############
@@ -291,10 +297,6 @@ function UpdateShape!(Eϕ, X, Y, Xdash, Ydash)
                     autodiff = :forward, iterations = maxIter);  
     X .= result.minimizer[1:Ndisc]; Y .= result.minimizer[Ndisc+1:end];
 
-    # TESTING - ENFORCE BCs; 
-    # Y[1] = Y[2];
-    # Y[end] = Y[end-1];
-
     # finally, update derivatives 
     Xdash .= FDX(X); Ydash .= FDY(Y);
     return result;
@@ -329,6 +331,7 @@ function ProjectEvec!(ϕ, X, Y; dEVs = [], dEVnorms = [])
     # modifies in place, replacing the existing state with one that has the perturbation normalised
     # returns the normalised perturbation 
     # also returns a flag if it 'converged' correctly (original norm close to target norm)
+    # finally, returns estimated eigenvalue of time evolution
     # optional argument to first subtract projections onto each eigenvector in EV
     # takes the deviation from steady-state, not the full state/
     ZZ = hcat(ϕ, X, Y) # full state 
@@ -343,10 +346,13 @@ function ProjectEvec!(ϕ, X, Y; dEVs = [], dEVnorms = [])
     targetNorm = 6; # target norm 
     projRes = ( (globalNorm / targetNorm) <= 10 ) 
     # projRes = true;
+
+    evalEst = log((globalNorm/targetNorm))/dt;
+
     dZZ = dZZ / globalNorm * targetNorm; # normalise the perturbation 
     ZZ = ZZ0 .+ dZZ; # get the full state again 
     ϕ .= ZZ[:,1]; X .= ZZ[:,2]; Y .= ZZ[:,3]; # save new state 
-    return (dZZ, projRes);
+    return (dZZ, projRes, evalEst);
 end;
 
 ############ -------------------------------------------------- ############
@@ -517,29 +523,58 @@ function postPlot(Tn, ϕtot, ϵtot, Ncutoff)
     return plt;
 end
 
-function vis3D(X, Y, ϕ, titleTxt = false)
+function vis3D(ϕ, X, Y, αboost = 1.0, titleTxt = false)
     # creates and returns a 3D plot created by rotating the (X, Y) parameterised 
     # surface through 3D space 
+    # αboost boosts the perturbation to make it more visible. Set to 1 for no boost
+
+    # (dX, dY) = X .- X0, Y .- Y0; 
+    # (X, Y) = X0 .+ αboost * dX, Y0 .+ αboost * dY;
+
     # first, prepare the shape
     X3D = [X[i] * Cosθ[j] for i in 1:Ndisc, j in 1:Ndisc3D];
-    Y3D = [Y[i]           for i in 1:Ndisc, j in 1:Ndisc3D];
+    Y3D = [Y[i] * 1       for i in 1:Ndisc, j in 1:Ndisc3D];
     Z3D = [X[i] * Sinθ[j] for i in 1:Ndisc, j in 1:Ndisc3D];
-    ϕ3D = [ϕ[i]           for i in 1:Ndisc, j in 1:Ndisc3D];
-    
-    plt = scatter(vec(X3D), vec(Y3D), vec(Z3D);
-            markersize = 5, marker = :sphere, 
-            markerstrokewidth = 0,
-            zcolor = vec(ϕ3D), colormap = cmap,
-            # clims = (minimum(ϕ3D), maximum(ϕ3D)),
-            camera = (0, 90),
-            xlabel = "x (μm)", ylabel = "y(μm)", zlabel = "z(μm)",
-            legend = false)
+    ϕ3D = [ϕ[i] * 1       for i in 1:Ndisc, j in 1:Ndisc3D];
+
+    # next, boost it 
+    (dX3D, dY3D, dZ3D) = X3D .- X03D, Y3D .- Y03D, Z3D .- Z03D;
+    (X3D, Y3D, Z3D) = X03D .+ αboost*dX3D, Y03D .+ αboost*dY3D, Z03D .+ αboost*dZ3D;
+
+    plt = GLMakie.surface(X3D, Y3D, Z3D,
+                axis = (type = GLMakie.Axis3, azimuth = pi/4,
+                           aspect = :equal),
+                color = ϕ3D, colormap = cmap);
 
     if titleTxt isa String
         title!(titleTxt)
     end
     return plt;
 end
+
+############ -------------------------------------------------- ############
+############ ------------- LOADING EIGENVECTORS --------------- ############
+############ -------------------------------------------------- ############
+
+@load "EVs//EV1.jld2" EV1;
+dEV1 = EV1 .- ZZ0; # the difference to steady state 
+dEV1Norm = inp(dEV1, dEV1);
+
+@load "EVs//EV1r.jld2" EV1r;
+dEV1r = EV1r .- ZZ0; 
+dEV1rNorm = inp(dEV1r, dEV1r);
+
+@load "EVs//EV2side.jld2" EV2side;
+dEV2side = EV2side .- ZZ0; 
+dEV2sideNorm = inp(dEV2side, dEV2side);
+
+@load "EVs//EV2top.jld2" EV2top;
+dEV2top = EV2top .- ZZ0; 
+dEV2topNorm = inp(dEV2top, dEV2top);
+
+@load "EVs//EV3r.jld2" EV3r;
+dEV3r = EV3r .- ZZ0; 
+dEV3rNorm = inp(dEV3r, dEV3r);
 
 
 ############ -------------------------------------------------- ############
@@ -554,10 +589,10 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 # now morphogen array
 ϕ = zeros(Ndisc);
 # ϕ .= ϕ0topBump;  
-# ϕ .= ϕ0sideBump;
+ϕ .= ϕ0sideBump;
 # ϕ .= ϕ0bottomBump;
 # ϕ .= ϕ0doubleBump;
-ϕ .= ϕ0bumpy;
+# ϕ .= ϕ0bumpy;
 # ϕ .= ϕ0; 
 
 # save initial strain squared
@@ -569,26 +604,15 @@ shapeAnim = Animation();
 simName = "temp"; # "temp"
 runAnim = true;
 
-dZZ = zeros(Ndisc, 3); 
+dZZ = zeros(Ndisc, 3); dϕ = zeros(Ndisc); dX = zeros(Ndisc); dY = zeros(Ndisc);
 
-# load evecs to project off 
-@load "EVs//EV1r.jld2" EV1r;
-dEV1r = EV1r .- ZZ0; # the difference to steady state 
-dEV1rNorm = inp(dEV1r, dEV1r);
-@load "EVs//EV2side.jld2" EV2side;
-dEV2side = EV2side .- ZZ0; # the difference to steady state 
-dEV2sideNorm = inp(dEV2side, dEV2side);
-@load "EVs//EV3r.jld2" EV3r;
-dEV3r = EV3r .- ZZ0; # the difference to steady state 
-dEV3rNorm = inp(dEV3r, dEV3r);
-
-runsim = true;
+runsim = false;
 doProj = true; # whether to project vs just do time evolution 
 
 tstart = time();
 if runsim
     global ϵsq; 
-    global dZZ; 
+    global dZZ, dϕ, dX, dY;
     SaveData!(0, ϕ, X, Y, Xdash, Ydash, ϵsq,
                     ϕtot, ϵtot)
 
@@ -606,8 +630,14 @@ if runsim
 
         # Step B1: project onto eigenvector 
         if doProj
-            (dZZ, projRes) = ProjectEvec!(ϕ, X, Y; dEVs = [dEV1r, dEV2side, dEV3r], dEVnorms = [dEV1rNorm, dEV2sideNorm, dEV3rNorm]) 
+            (dZZ, projRes, evalEst) = 
+                ProjectEvec!(ϕ, X, Y; 
+                    dEVs =      [], 
+                    dEVnorms =  []) 
             dϕ = dZZ[:,1]; dX = dZZ[:,2]; dY = dZZ[:,3]; # unpack 
+            if Ntimes - n <= lenEvalEst
+                evalEstFull[Ntimes-n] = evalEst;
+            end
         end
 
         # Step C1: save necessary data 
@@ -660,25 +690,29 @@ if runsim
 
     # output finish data 
     println("Total sim time: $(round(time() - tstart)) seconds for $Ncutoff timesteps.")
+    if doProj
+        println("Estimated eigenvalue: $(sum(evalEstFull)/lenEvalEst)")
+    end
 
     # save and plot relevant objects
     mp4(fullAnim, simFP * "/sim_$simName-full.mp4", fps = 4);
     mp4(shapeAnim, simFP * "/sim_$simName-shape.mp4", fps = 4);
     plt = postPlot(Tn, ϕtot, ϵtot, Ncutoff); display(plt); 
 
-    # pltLE = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, trStrSq(X, Y, Xdash, Ydash));
-    # display(pltLE); savefig(pltLE, "leadingEvec.png")
+    pltLE = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, trStrSq(X, Y, Xdash, Ydash));
+    display(pltLE); savefig(pltLE, simFP * "/sim_$simName-evec.png")
 
     # EV2top = hcat(ϕ, X, Y);
     # @save "EVs//EV2top.jld2" EV2top;
-    
 end
-# @load "EVs//EV1.jld2" EV1;
 # EV = EV1;
 # pltEVEC = visualise(EV[:,1], EV[:,2], EV[:,3], 
 #                     trStrSq(EV[:,2], EV[:,3], FDX(EV[:,2]), FDX(EV[:,3])), "Eigenvector 1")
 # display(pltEVEC); savefig(pltEVEC, "EVs//EV1.png")
 
+# EV = EV2top;
+# pltEVEC3D = vis3D(EV[:,1], EV[:,2], EV[:,3], 10, "Eigenvector");
+# display(pltEVEC3D); 
 
 ############ -------------------------------------------------- ############
 ############ ---------------- TROUBLESHOOTING FULL STEPS ------------------ ############
@@ -700,7 +734,7 @@ end
 # # plt = plot(Si, ϕ.-ϕ0); display(plt);
 
 # # Step B1: project onto eigenvector 
-# (dZZ_test, projRes_test) = ProjectEvec!(ϕ, X, Y);
+# (dZZ_test, projRes_test, eval_test) = ProjectEvec!(ϕ, X, Y);
 
 
 
