@@ -18,7 +18,8 @@
 
 
 using LinearAlgebra, DifferentialEquations, BandedMatrices;
-using Plots, LaTeXStrings, GLMakie;
+using Plots, LaTeXStrings;
+import GLMakie;
 using Optim, ForwardDiff;
 using JLD2;
 println("running...");
@@ -51,14 +52,14 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 ############ -------------------------------------------------- ############
 ############ ------------- NUMERICAL PARAMETERS --------------- ############
 ############ -------------------------------------------------- ############
-Ndisc = 40; # number of discretisation points on s (40)
-smin = -π/2; smax = π/2; # bounds of s values (-π/2, π/2)
+Ndisc = 40; # number of discretisation points on ξ (40)
+ξmin = -π/2; ξmax = π/2; # bounds of ξ values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.03) 
 tmax = 400*dt; # max time (400 * dt for evec). 
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
-dsint = 0.01; # small number: distance inside the s grid to start at to avoid div0
-# dsint = (π/Ndisc)/2;
+dξint = 0.01; # small number: distance inside the ξ grid to start at to avoid div0
+# dξint = (π/Ndisc)/2;
 maxIter = 15000; # iteratinos for the shape update (v expensive), 15000 usually 
 lenEvalEst = 10; # how many final iterations to average eigenvalue over 
 
@@ -77,9 +78,9 @@ cmap = cgrad(:viridis); # colormap for morphogen concentration
 ############ -------------------------------------------------- ############
 avg(vec)=[(vec[i]+vec[i+1])/2 for i=1:length(vec)-1]
 
-Si = range(smin+dsint, smax-dsint, Ndisc); # grid of s values 
-SiCt = avg(Si); # svalscentre
-ds = Si[2] - Si[1]; 
+ξi = range(ξmin+dξint, ξmax-dξint, Ndisc); # grid of ξ values 
+ξiCt = avg(ξi); # svalscentre
+dξ = ξi[2] - ξi[1]; 
 Tn = 0:dt:tmax; # grid of t values 
 Ntimes = length(Tn); 
 Ncutoff = Ntimes; # where the sim ends because it breaks
@@ -106,12 +107,12 @@ Px[1, 1] = -3; Px[1, 2] = 4; Px[1, 3] = -1; # forward diff top row 3rd order
 Px[Ndisc, Ndisc] = 3; Px[Ndisc, Ndisc-1] = -4; Px[Ndisc, Ndisc-2] = 1; # backward diff bottom row 
 # Px[1,1:2] = 2*[-1, 1] # trying first-order difference 
 # Px[Ndisc, Ndisc-1:Ndisc] = 2*[-1, 1]
-Px /= (2*ds); # scale 
+Px /= (2*dξ); # scale 
 
 # first deriv - 0 bcs, used for y and morphogen. Top and bottom row = 0
 # Py = Matrix( Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)) );
 # Py[1, :] .= 0.0; Py[Ndisc, :] .= 0.0
-# Py /= (2*ds);
+# Py /= (2*dξ);
 Py = Px;
 
 # first deriv periodic bcs 
@@ -119,31 +120,31 @@ Py = Px;
 # Py[1, :] .= 0.0; Py[Ndisc, :] .= 0.0;
 # Py[1, 2] = 1.0; Py[1, end] = -1.0; 
 # Py[Ndisc, 1] = 1.0; Py[Ndisc, Ndisc-1] = -1.0;
-# Py /= (2*ds);
+# Py /= (2*dξ);
 
 # convert to functions 
 FDX(J) = Px*J;
 FDY(J) = Py*J;
-FDCT(J) = diff(J)/ds; # centered first derivative
+FDCT(J) = diff(J)/dξ; # centered first derivative
 
 
-# integral over total s domain, using trapezoid rule
-integrateSdom(Qty) = ds * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
-integrateSdomCt(QtyCt) = Ndisc/(Ndisc-1) * integrateSdom(QtyCt); # centered needs correction
+# integral over total ξ domain, using trapezoid rule
+integrateξdom(Qty) = dξ * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
+integrateξdomCt(QtyCt) = Ndisc/(Ndisc-1) * integrateξdom(QtyCt); # centered needs correction
 
 # inner product for eigenvector calculation 
-inp(ZZ1, ZZ2) = integrateSdom((ZZ1[:,1].*ZZ2[:,1] .+ ZZ1[:,2].*ZZ2[:,2]/r^2 
+inp(ZZ1, ZZ2) = integrateξdom((ZZ1[:,1].*ZZ2[:,1] .+ ZZ1[:,2].*ZZ2[:,2]/r^2 
                     .+ ZZ1[:,3].*ZZ2[:,3]/r^2 ) .* volEl)
 
 ############ -------------------------------------------------- ############
 ############ ------------- PRESAVING CALCULATIONS ------------- ############
 ############ -------------------------------------------------- ############
-CosS = cos.(Si); SinS = sin.(Si); # presaving trigs 
-volEl = R0^2 * CosS; # volume element
+Cosξ = cos.(ξi); Sinξ = sin.(ξi); # presaving trigs 
+volEl = R0^2 * Cosξ; # volume element
 
 # centered versions
-CosSCt = cos.(SiCt);
-volElCt = R0^2 * CosSCt;
+CosξCt = cos.(ξiCt);
+volElCt = R0^2 * CosξCt;
 
 # 3D requirement 
 Cosθ = cos.(θ); Sinθ = sin.(θ);
@@ -152,17 +153,17 @@ Cosθ = cos.(θ); Sinθ = sin.(θ);
 ############ -------- STEADY-STATE / INITIAL FUNCTIONS -------- ############
 ############ -------------------------------------------------- ############
 ϵ0sc = 0.5 * ((r^2 - R0^2)/R0^2)^2; # scalar initial (constant) trace of strain tensor squared
-ϵ0 = zeros(Ndisc) .+ ϵ0sc; # over s-grid
+ϵ0 = zeros(Ndisc) .+ ϵ0sc; # over ξ-grid
 V0 = 4/3 * r^3; # initial volume, normalised by pi
 
 ϕ0sc = 1/ζ * f.(ϵ0sc); # steady-state morphogen scalar
 ϕ0sc = (ζ==0) ? 1.0 : ϕ0sc;
 ϕ0 = zeros(Ndisc) .+ ϕ0sc; # steady-state morphogen over the full grid 
 
-X0 = r * CosS; Y0 = r * SinS; # initial condition shape 
+X0 = r * Cosξ; Y0 = r * Sinξ; # initial condition shape 
 X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives 
 
-Xundef = R0 * CosS; Yundef = R0 * SinS; # undeformed shape
+Xundef = R0 * Cosξ; Yundef = R0 * Sinξ; # undeformed shape
 rXu =  X0 ./ r; rYu =  Y0 ./ r; # radial unit vectors
 
 ZZ0 = hcat(ϕ0, X0, Y0); # full state vector, as Ndisc * 3 matrix 
@@ -177,51 +178,37 @@ Z03D = [X0[i] * Sinθ[j] for i in 1:Ndisc, j in 1:Ndisc3D];
 ############ ------------ FUNCTIONALS AND QTYs --------------- ############
 ############ -------------------------------------------------- ############
 function trStrSq(X, Y, Xdash, Ydash)
-    # takes vectors of the surface parameterisation x(s), y(s) and derivatives w.r.t. s
+    # takes vectors of the surface parameterisation x(ξ), y(ξ) and derivatives w.r.t. s
     # returns a vector containing the trace of the square of the strain tensor at each s
     t1 = (Xdash).^2 .+ (Ydash).^2 .- R0^2;
-    # handle boundary different if s coords go all the way to the boundary 
+    # handle boundary different if ξ coords go all the way to the boundary 
     # if Si[1] == -π/2
-    #     t2[interior] = X[interior].^2 ./ (CosS[interior].^2); # interior is just x/cos^2 
-    #     t2[[1,end]] .= r^2; # boundary is when x(s)~r cos(s)
+    #     t2[interior] = X[interior].^2 ./ (Cosξ[interior].^2); # interior is just x/cos^2 
+    #     t2[[1,end]] .= r^2; # boundary is when x(ξ)~r cos(ξ)
     # else
-    #     t2 = X.^2 ./ CosS.^2;
+    #     t2 = X.^2 ./ Cosξ.^2;
     # end
     # t2 = t2 .- R0^2; 
-    t2 = (X.^2 ./ CosS.^2) .- R0^2;
+    t2 = (X.^2 ./ Cosξ.^2) .- R0^2;
 
     return 1/(4*R0^4) * (t1.^2 .+ t2.^2); 
 end
 
 function ElEn(Eϕ, X, Y, Xdash, Ydash)
     # Elastic energy functional 
-    return integrateSdom(Eϕ/2 .* trStrSq(X, Y, Xdash, Ydash) .* volEl); # integrand over S0 including volel
+    return integrateξdom(Eϕ/2 .* trStrSq(X, Y, Xdash, Ydash) .* volEl); # integrand over S0 including volel
 end
 
 function VolInt(X, Ydash)
     # volume integral 
     fn = X.^2 .* Ydash; # integrand normalised by pi 
-    return integrateSdom(fn);
+    return integrateξdom(fn);
 end
-
-# function VolInt(X, Y, Xdash, Ydash)
-#     # volume itnegral take 2
-#     # normalised by π
-#     fn = X .* (X.*Ydash .- Xdash.*Y)
-#     return 2/3 * integrateSdom(fn);
-# end
 
 function SurfaceFriction(X, Y)
     # number that models friction to stop entire hydra running away
-    
-    # Option 1: The difference between the COM and zero
-    # center of mass in x direction is naturally 0 by symm
-    # return sum(Y)^2;
 
-    # Option 2: Pin the base 
-    # return (Y[1] - Y0[1])^2
-
-    # Option 3: Keep it close to the IC 
+    # Keep it close to the IC 
     return sum( (Y .- Y0).^2 + (X .- X0).^2 );
 end
 
@@ -261,10 +248,10 @@ function MorphogenFunctional(ϕ, ϕn, X, Y, ϵsq)
     integrand1 = (ϕ .- ϕn).^2 /(2*dt) .* volEl; # time-deriv bit
     integrand2 = -f.(ϵsq) .* ϕ .* volEl; # morphogen production bit
     integrand3 = ζ * (ϕ).^2 /2 .* volEl; # disassociation bit
-    integrand4 = D * FDCT(ϕ).^2 /2 .* CosSCt; # diffusion bit, volEl already incorporated
+    integrand4 = D * FDCT(ϕ).^2 /2 .* CosξCt; # diffusion bit, volEl already incorporated
     
     integrandTot = integrand1 .+ integrand2 .+ integrand3;
-    return integrateSdom(integrandTot) + integrateSdom(integrand4);
+    return integrateξdom(integrandTot) + integrateξdom(integrand4);
 end
 
 ############ -------------------------------------------------- ############
@@ -319,8 +306,8 @@ function SaveData!(n, ϕ, X, Y, Xdash, Ydash, ϵsq,
     #   and relevant data vecs to save into
     # ϕtot: total morphogen present in the organism
     # ϵtot: total strain
-    ϕtot[n+1] = integrateSdom(ϕ); 
-    ϵtot[n+1] = integrateSdom(ϵsq);
+    ϕtot[n+1] = integrateξdom(ϕ); 
+    ϵtot[n+1] = integrateξdom(ϵsq);
 end
 
 ############ -------------------------------------------------- ############
@@ -359,43 +346,43 @@ end;
 ############ ------------------ BETTER ICs -------------------- ############
 ############ -------------------------------------------------- ############
 
-# test approximations of r cos(s), r sin(s) to use as initial guesses for x(s), y(s) to test
+# test approximations of r cos(ξ), r sin(ξ) to use as initial guesses for x(ξ), y(ξ) to test
 # shape evolution. 
-# To ensure BCs, using quadratic approximation of x(s) with roots at +-pi/2 plus an interesting perturbation 
-# Just using the actual y(s) function 
-x0temp(s) = r * ( 1 - 4/π^2 * s^2 + 0.2 * (s^2 - π^2/4) * s );
-y0temp(s) = r * sin(s);
-x0tempDash(s) = r * ( -8/π^2 * s + 0.2 * (3*s^2 - π^2/4) );
-y0tempDash(s) = r * cos(s); 
+# To ensure BCs, using quadratic approximation of x(ξ) with roots at +-pi/2 plus an interesting perturbation 
+# Just using the actual y(ξ) function 
+x0temp(ξ) = r * ( 1 - 4/π^2 * ξ^2 + 0.2 * (ξ^2 - π^2/4) * ξ );
+y0temp(ξ) = r * sin(ξ);
+x0tempDash(ξ) = r * ( -8/π^2 * ξ + 0.2 * (3*ξ^2 - π^2/4) );
+y0tempDash(ξ) = r * cos(ξ); 
 
 # so that the guess isn't too far off the actual soln, construct the test as a weighted sum of 
 # the correct IC and the 'interesting' IC, then adjust for correct volume
 α_shape = 0.2; # weight in the 'interesting' initial condition (0.2)
-X0test = α_shape*x0temp.(Si) + (1-α_shape)*X0; Y0test = α_shape*y0temp.(Si) + (1-α_shape)*Y0;
-X0testDash = α_shape*x0tempDash.(Si) + (1-α_shape)*X0dash; Y0testDash = α_shape*y0tempDash.(Si) + (1-α_shape)*Y0dash;
+X0test = α_shape*x0temp.(ξi) + (1-α_shape)*X0; Y0test = α_shape*y0temp.(ξi) + (1-α_shape)*Y0;
+X0testDash = α_shape*x0tempDash.(ξi) + (1-α_shape)*X0dash; Y0testDash = α_shape*y0tempDash.(ξi) + (1-α_shape)*Y0dash;
 Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 
 ### --- ϕ ICs --- ###
 # nonuniform but obey BCs
 α_morph = 0.125; # weight of the nonuniform 'interesting' component (0.125)
 # bump on the top of the domain
-ϕ0tempTop = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
+ϕ0tempTop = zeros(Ndisc) .+ Sinξ * ϕ0sc .+ ϕ0sc; 
 ϕ0topBump = α_morph*ϕ0tempTop .+ (1-α_morph)*ϕ0; 
 
 # bump on the side of the domain 
-ϕ0tempSide = zeros(Ndisc) .+ 2*exp.(-2 * Si.^2) * ϕ0sc;
+ϕ0tempSide = zeros(Ndisc) .+ 2*exp.(-2 * ξi.^2) * ϕ0sc;
 ϕ0sideBump = α_morph*ϕ0tempSide .+ (1-α_morph)*ϕ0; 
 
 # bump on the bottom of the domain 
-ϕ0tempBottom = zeros(Ndisc) .+ SinS * ϕ0sc .+ ϕ0sc; 
+ϕ0tempBottom = zeros(Ndisc) .+ Sinξ * ϕ0sc .+ ϕ0sc; 
 ϕ0bottomBump = -α_morph*ϕ0tempBottom .+ (1-α_morph)*ϕ0; 
 
 # double bump 
-ϕ0tempDouble = zeros(Ndisc) .+ sin.(2*Si).^2 * ϕ0sc .+ ϕ0sc;
+ϕ0tempDouble = zeros(Ndisc) .+ sin.(2*ξi).^2 * ϕ0sc .+ ϕ0sc;
 ϕ0doubleBump = α_morph*ϕ0tempDouble .+ (1-α_morph)*ϕ0;
 
 # very random not odd or even 
-ϕ0tempBumpy = zeros(Ndisc) .+ (sin.(4*Si).^2 .+ 5*cos.(Si .+ 0.5) .+ 3 )/8 * ϕ0sc;
+ϕ0tempBumpy = zeros(Ndisc) .+ (sin.(4*ξi).^2 .+ 5*cos.(ξi .+ 0.5) .+ 3)/8 * ϕ0sc;
 ϕ0bumpy = α_morph * ϕ0tempBumpy .+ (1-α_morph)*ϕ0;
 
 ############ -------------------------------------------------- ############
@@ -469,9 +456,9 @@ function visRdef(ϕ, X, Y)
     ΔX = X .- X0; ΔY = Y .- Y0; # compute deformation
     Δr = ΔX .* rXu .+ ΔY .* rYu; # dot-product to get scalar radial deflection
 
-    # then, plot dr against S 
-    plt = plot(Si, Δr, label = L"|\Delta \mathbf{r}|", lw = 2, line_z = ϕ, c = cmap,
-                xlabel = "s", ylabel = "r (μm)", legend = :topleft, colorbar = false,
+    # then, plot dr against ξ 
+    plt = plot(ξi, Δr, label = L"|\Delta \mathbf{r}|", lw = 2, line_z = ϕ, c = cmap,
+                xlabel = "ξ", ylabel = "r (μm)", legend = :topleft, colorbar = false,
                 legendfontsize = 14);
     return plt;
 end
@@ -479,17 +466,17 @@ end
 function visQtys(ϕ, ϵsq, titleTxt = false;
                     plotE = true, plotTrig = false)
     # plots morphogen and strain against S, returning plot object 
-    plt = plot(Si, ϕ, label = L"\varphi", lw = 1, line_z = ϕ, c = cmap, ls = :dash, 
-                xlabel = "s", ylabel = "Morphogen", legend = :topleft, colorbar = false,
+    plt = plot(ξi, ϕ, label = L"\varphi", lw = 1, line_z = ϕ, c = cmap, ls = :dash, 
+                xlabel = "ξ", ylabel = "Morphogen", legend = :topleft, colorbar = false,
                 legendfontsize = 12);
     if plotE
-        plot!(twinx(), Si, ϵsq, label = L"\epsilon^2", lw = 2, line_z = ϕ, c = cmap,
+        plot!(twinx(), ξi, ϵsq, label = L"\epsilon^2", lw = 2, line_z = ϕ, c = cmap,
                 ylabel = "Strain", legend = :left, colorbar = false,
                 legendfontsize = 12)
     end
     if plotTrig
-        sinScaled = -CosS * (maximum(ϕ)-minimum(ϕ)) .+ (maximum(ϕ)+minimum(ϕ))/2;
-        plot!(Si, sinScaled, label = L"-\cos(s)", lw = 1, color = :red)
+        sinScaled = -Cosξ * (maximum(ϕ)-minimum(ϕ)) .+ (maximum(ϕ)+minimum(ϕ))/2;
+        plot!(ξi, sinScaled, label = L"-\cos(ξ)", lw = 1, color = :red)
     end
     if titleTxt isa String
         title!(titleTxt)
@@ -606,7 +593,7 @@ runAnim = true;
 
 dZZ = zeros(Ndisc, 3); dϕ = zeros(Ndisc); dX = zeros(Ndisc); dY = zeros(Ndisc);
 
-runsim = false;
+runsim = true;
 doProj = true; # whether to project vs just do time evolution 
 
 tstart = time();
@@ -619,7 +606,7 @@ if runsim
     for n = 1:Ntimes-1
         t = Tn[n];
 
-        # Step A1: update shape of X(s), Y(s) and derivatives 
+        # Step A1: update shape of x(ξ), y(ξ) and derivatives 
         shapeRes = UpdateShape!(E.(ϕ), X, Y, Xdash, Ydash); 
 
         # Step A2: compute new strain tensor squared 
@@ -731,7 +718,7 @@ end
 
 # # Step A3: evolve morphogen
 # morphRes_test = UpdateMorphogen!(ϕ, X, Y, ϵsq);
-# # plt = plot(Si, ϕ.-ϕ0); display(plt);
+# # plt = plot(ξi, ϕ.-ϕ0); display(plt);
 
 # # Step B1: project onto eigenvector 
 # (dZZ_test, projRes_test, eval_test) = ProjectEvec!(ϕ, X, Y);

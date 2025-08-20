@@ -1,9 +1,28 @@
 ############ -------------------------------------------------- ############
+############ ---------------- PREV CODE STUFF ----------------- ############
+############ -------------------------------------------------- ############
+
+# function VolInt(X, Y, Xdash, Ydash)
+#     # volume itnegral take 2
+#     # normalised by π
+#     fn = X .* (X.*Ydash .- Xdash.*Y)
+#     return 2/3 * integrateξdom(fn);
+# end
+
+# within SurfaceFriction
+    # Option 1: The difference between the COM and zero
+    # center of mass in x direction is naturally 0 by symm
+    # return sum(Y)^2;
+
+    # Option 2: Pin the base 
+    # return (Y[1] - Y0[1])^2
+
+############ -------------------------------------------------- ############
 ############ --------------- CHECKING FORMULAS ---------------- ############
 ############ -------------------------------------------------- ############
 checkFormulas = false
 if checkFormulas 
-    X = r * CosS; Y = r * SinS; 
+    X = r * Cosξ; Y = r * Sinξ; 
     Xdash = FDX(X); Ydash = FDY(Y); 
 
     # check trace of strain tensor calc (CHECKED)
@@ -12,7 +31,7 @@ if checkFormulas
 
     # check first-derivative matrix (CHECKED)
     # error on bdy is about double error on interior, but still scales with ds as expected
-    XdashTrue = - r * SinS;
+    XdashTrue = - r * Sinξ;
     # println(XdashTrue .- Xdash);
     # println(maximum( abs.(XdashTrue .- Xdash) ));
 
@@ -106,7 +125,7 @@ function TroubleshootSPHM2()
     ϵsq = trStrSq(X, Y, Xdash, Ydash); 
     plt = visQtys(ϕ, ϵsq, "After diffusion eigenfinding", plotE = false); display(plt); 
 
-    plt = plot(Si, ϕ); plot!(Si, ϕ2); plot!(Si, ϕ3); display(plt);
+    plt = plot(ξi, ϕ); plot!(ξi, ϕ2); plot!(ξi, ϕ3); display(plt);
 end
 
 
