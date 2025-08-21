@@ -4,24 +4,12 @@
 # LONG TERM:
 # - 
 
-# *** DESCRIPTION OF THE PROBLEM *** #
-# Y-Y0 starts to buckle at the poles. This is basically because of boundary conditions on Y:
-#   BC is that Y|poles = 0, but this is not exactly true, and is certainly not true of Y0.
-#   Any attempt to enforce BCs, either by specifying Y[1] = Y[2], or by creating a separate 
-#   derivative matrix so that Y' = DerivOperator[Y] = 0 at the poles, breaks. This is basically  
-#   because Y-Y0 does not = 0 at the poles because the correct, precise Y0 does not have 0 derivative
-#   at the end. 
-#   Things I have tried:
-#       (A) Setting a new derivative operator to enforce Y' = 0 at the poles 
-#       (B) Manually enforcing Y[1] = Y[2] to eliminate the derivative here 
-#       (C) Manual enforcement also for Y0, so that (Y-Y0)' also vanishes at the poles. 
 
-
-using LinearAlgebra, DifferentialEquations, BandedMatrices;
-using Plots, LaTeXStrings;
-import GLMakie;
-using Optim, ForwardDiff;
-using JLD2;
+using LinearAlgebra, DifferentialEquations, BandedMatrices; # calculations
+using Plots, LaTeXStrings; # plot stuff 
+import GLMakie, Makie, FileIO; # 3D plot stuff 
+using Optim, ForwardDiff; # optimisation
+using JLD2; # deprecated?
 println("running...");
 
 ############ -------------------------------------------------- ############
@@ -36,7 +24,7 @@ simFP = "C:/Users/rgray/OneDrive/ryan/Uni/HONOURS/hons-proj/vids"
 # Length units in μm, time units in hr 
 R0 = 130; # radius of force-free reference sphere (130)
 r = 160; # radius of initial condition sphere (160 for now) 
-E0 = 440.0; # base Young's modulus (440). NOTE: this interacts with Ω
+F0 = 440.0; # base Young's modulus (440). NOTE: this interacts with Ω
 h = 20.0 # bilayer thickness (20). NOTE: this interacts with Ω
 b = 5.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
 κ = 1.0; # TODO morphogen stress upregulation coefficient (1 for now)  
@@ -46,7 +34,7 @@ D = 1000.0; # morphogen diffusion coefficient (0.01) # SPHERHARM
 # PARAM SETS OF NOTE: 
 # - (A) 
 
-E(ϕ) = E0 * h * exp(-b*ϕ); # elasticity function
+F(ϕ) = F0 * h * exp(-b*ϕ); # elasticity function
 f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function 
 
 ############ -------------------------------------------------- ############
@@ -55,7 +43,7 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on ξ (40)
 ξmin = -π/2; ξmax = π/2; # bounds of ξ values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.03) 
-tmax = 400*dt; # max time (400 * dt for evec). 
+tmax = 40*dt; # max time (400 * dt for evec). 
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
 dξint = 0.01; # small number: distance inside the ξ grid to start at to avoid div0
@@ -71,7 +59,7 @@ cfl = 2 * D * dt / (π/Ndisc)^2; # cfl condition for diffusion, checking sensibl
 ############ -------------------------------------------------- ############
 plotRes = 1; # how many timesteps per plot (Inf for just 1st and last plots)
 cmap = cgrad(:viridis); # colormap for morphogen concentration 
-αEvec = 2; # factor to plot the eigenvector (1 to plot it exactly as seen) (2)
+αboost = 2; # factor to plot the eigenvector (1 to plot it exactly as seen) (2)
 
 ############ -------------------------------------------------- ############
 ############ ---------------- NUMERICAL SETUP ----------------- ############
@@ -194,9 +182,9 @@ function trStrSq(X, Y, Xdash, Ydash)
     return 1/(4*R0^4) * (t1.^2 .+ t2.^2); 
 end
 
-function ElEn(Eϕ, X, Y, Xdash, Ydash)
+function ElEn(Fϕ, X, Y, Xdash, Ydash)
     # Elastic energy functional 
-    return integrateξdom(Eϕ/2 .* trStrSq(X, Y, Xdash, Ydash) .* volEl); # integrand over S0 including volel
+    return integrateξdom(Fϕ/2 .* trStrSq(X, Y, Xdash, Ydash) .* volEl); # integrand over S0 including volel
 end
 
 function VolInt(X, Ydash)
@@ -226,19 +214,19 @@ function Friction(X, Y)
     return sum(ΔX.^2 + ΔY.^2);
 end
 
-function EnergyFunctional(Eϕ, X, Y, Xdash, Ydash)
+function EnergyFunctional(Fϕ, X, Y, Xdash, Ydash)
     # total energy functional, including elastic energy and a punishing potential and surface friction
-    return ElEn(Eϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Ydash) - V0)^2 +
+    return ElEn(Fϕ, X, Y, Xdash, Ydash) + Ω * (VolInt(X, Ydash) - V0)^2 +
                 ω * SurfaceFriction(X, Y);
                 # κ_fric * Friction(X, Y) + 
                 # κ_bend * (BendingPenalty(X) + BendingPenalty(Y));
 end
 
-function EFwrapped(fullData, Eϕ)
+function EFwrapped(fullData, Fϕ)
     # wrapper for the energy functional. Unpacks the data, computes derivatives, then
     # returns the energy functional to optimise 
     # trying to minimise extra space allocations
-    return EnergyFunctional(Eϕ, fullData[1:Ndisc], fullData[Ndisc+1:end], # X, Y 
+    return EnergyFunctional(Fϕ, fullData[1:Ndisc], fullData[Ndisc+1:end], # X, Y 
                                 FDX(fullData[1:Ndisc]), FDY(fullData[Ndisc+1:end]));
 end
 
@@ -268,7 +256,7 @@ function Renormalise!(X, Y, Xdash, Ydash, V0)
     Xdash .= Xdash * normk; Ydash .= Ydash * normk;
 end 
 
-function UpdateShape!(Eϕ, X, Y, Xdash, Ydash)
+function UpdateShape!(Fϕ, X, Y, Xdash, Ydash)
     # takes the current state data (shape and morphogen concentration), and updates X, Y 
     # and derivatives IN PLACE, by minimising the energy functional 
     # returns results of the optim
@@ -277,7 +265,7 @@ function UpdateShape!(Eϕ, X, Y, Xdash, Ydash)
     # lbounds = [dsint * 0.9; Vector(1:Ndisc-2)*-Inf; dsint*0.9; Vector(1:Ndisc)*-Inf ];
     # ubounds = [dsint * 1.1; Vector(1:Ndisc-2)*Inf; dsint*1.1; Vector(1:Ndisc)*Inf];
     
-    result = optimize(x -> EFwrapped(x, Eϕ), 
+    result = optimize(x -> EFwrapped(x, Fϕ), 
                     [X; Y], 
                     # lbounds, ubounds, Fminbox(GradientDescent()),
                     method = LBFGS(), 
@@ -388,22 +376,25 @@ Renormalise!(X0test, Y0test, X0testDash, Y0testDash, V0);
 ############ -------------------------------------------------- ############
 ############ ------------ VISUALISATION FUNCTIONS ------------- ############
 ############ -------------------------------------------------- ############
-function visShape(ϕ, X, Y, titleTxt = false)
+function visShape(ϕ, X, Y, titleTxt = false; αboost = 1)
     # takes a surface discretised parameterisation and morphogen concentration
     # displays a plot of the deformed hydra, colored by the morphogen concentration 
     # optionally adds a provided title 
     # returns the plot object for displaying and saving
+    # αboost: enhances perturbation, set to 1 for no perturbation
+    X = X0 .+ αboost*(X .- X0); Y = Y0 .+ αboost*(Y .- Y0);
 
     # Plot actual deformed shape, colored by morphogen concentration 
-    plt = plot(X, Y, line_z = ϕ, lw = 4, alpha = 0.7,
-                c = cmap, label = "Hydra shape", 
+    plt = plot(X, Y, line_z = ϕ, lw = 5, alpha = 0.7,
+                c = cmap, colorbar_title = "φ",
+                label = "Hydra shape", 
                 aspect_ratio = :equal, legend = :topright);
-    plot!(-X, Y, line_z = ϕ, lw = 4, alpha = 0.7,
+    plot!(-X, Y, line_z = ϕ, lw = 3, alpha = 0.7,
                 c = cmap, label = "")
 
     # Plot material points 
-    scatter!(X, Y, ms = 2.0, color = :black, label = "")
-    scatter!(-X, Y, ms = 2.0, color = :black, label = "")
+    scatter!(X, Y, ms = 1.5, color = :black, label = "")
+    scatter!(-X, Y, ms = 1.5, color = :black, label = "")
 
     # plot initial shape 
     plot!(X0, Y0, lw = 1, color = :grey, ls = :dash, label = "Steady-state"); 
@@ -449,6 +440,22 @@ function visDeform(ϕ, X, Y)
     return plt;
 end
 
+function visVecDeform(ϕ, X, Y)
+    # visualises defomration as a bunch of vectors plotted from the origin,
+    # colored by ξ. 
+    ΔX = X .- X0; ΔY = Y .- Y0; # compute deformation
+    og = 0 * ΔX; # origin
+
+    plt = quiver(og, og, quiver = (ΔX, ΔY),
+                    line_z = repeat(ξi, inner=4), c = :magma,
+                    linewidth = 2,
+                    colorbar_title = "ξ",
+                    );
+    xlabel!("Δx (μm)"); ylabel!("Δy (μm)");
+
+    return plt;
+end
+
 function visRdef(ϕ, X, Y)
     # plots deformation in radial direction against s, returning plot object
 
@@ -484,11 +491,14 @@ function visQtys(ϕ, ϵsq, titleTxt = false;
     return plt;
 end
 
-function visualise(ϕ, X, Y, ϵsq, titleTxt = false)
+function visualise(ϕ, X, Y, ϵsq, titleTxt = false; αboost = 1)
     # wrapper visualisation function to display all relevant plots at once 
+    # αboost: increases perturbation. Set to 1 for no boost
+    X = X0 .+ αboost*(X .- X0); Y = Y0 .+ αboost*(Y .- Y0);
     pltA = visShape(ϕ, X, Y); 
     pltB = visRdef(ϕ, X, Y);
-    pltC = visDeform(ϕ, X, Y);
+    # pltC = visDeform(ϕ, X, Y);
+    pltC = visVecDeform(ϕ, X, Y);
     pltD = visQtys(ϕ, ϵsq);
     combined = plot(pltA, pltB, pltC, pltD, layout = (2,2), size=(800,600)); 
     if titleTxt isa String
@@ -510,13 +520,11 @@ function postPlot(Tn, ϕtot, ϵtot, Ncutoff)
     return plt;
 end
 
-function vis3D(ϕ, X, Y, αboost = 1.0, titleTxt = false)
+function vis3D(ϕ, X, Y, titleTxt = false; αboost3D = 1, deform = false)
     # creates and returns a 3D plot created by rotating the (X, Y) parameterised 
     # surface through 3D space 
-    # αboost boosts the perturbation to make it more visible. Set to 1 for no boost
-
-    # (dX, dY) = X .- X0, Y .- Y0; 
-    # (X, Y) = X0 .+ αboost * dX, Y0 .+ αboost * dY;
+    # αboost3D enhances the perturbation to make it more visible. Set to 1 for no boost
+    # deform: only plots deformation as its own surface 
 
     # first, prepare the shape
     X3D = [X[i] * Cosθ[j] for i in 1:Ndisc, j in 1:Ndisc3D];
@@ -526,7 +534,11 @@ function vis3D(ϕ, X, Y, αboost = 1.0, titleTxt = false)
 
     # next, boost it 
     (dX3D, dY3D, dZ3D) = X3D .- X03D, Y3D .- Y03D, Z3D .- Z03D;
-    (X3D, Y3D, Z3D) = X03D .+ αboost*dX3D, Y03D .+ αboost*dY3D, Z03D .+ αboost*dZ3D;
+    (X3D, Y3D, Z3D) = X03D .+ αboost3D*dX3D, Y03D .+ αboost3D*dY3D, Z03D .+ αboost3D*dZ3D;
+
+    # convert to just deformed if required
+    X3D = deform ? dX3D : X3D;
+    Y3D = deform ? dY3D : Y3D; 
 
     plt = GLMakie.surface(X3D, Y3D, Z3D,
                 axis = (type = GLMakie.Axis3, azimuth = pi/4,
@@ -544,7 +556,7 @@ end
 ############ -------------------------------------------------- ############
 
 @load "EVs//EV1.jld2" EV1;
-dEV1 = EV1 .- ZZ0; # the difference to steady state 
+dEV1 .- ZZ0; # the difference to steady state 
 dEV1Norm = inp(dEV1, dEV1);
 
 @load "EVs//EV1r.jld2" EV1r;
@@ -592,6 +604,7 @@ simName = "temp"; # "temp"
 runAnim = true;
 
 dZZ = zeros(Ndisc, 3); dϕ = zeros(Ndisc); dX = zeros(Ndisc); dY = zeros(Ndisc);
+EV = zeros(Ndisc, 3);
 
 runsim = true;
 doProj = true; # whether to project vs just do time evolution 
@@ -607,7 +620,7 @@ if runsim
         t = Tn[n];
 
         # Step A1: update shape of x(ξ), y(ξ) and derivatives 
-        shapeRes = UpdateShape!(E.(ϕ), X, Y, Xdash, Ydash); 
+        shapeRes = UpdateShape!(F.(ϕ), X, Y, Xdash, Ydash); 
 
         # Step A2: compute new strain tensor squared 
         ϵsq = trStrSq(X, Y, Xdash, Ydash); 
@@ -633,14 +646,10 @@ if runsim
 
         # Step C2: visualise 
         tstr = round(t, digits = 2); 
-        if doProj
-            frameFullAnim = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, ϵsq,"t = $tstr"); 
-            frameShapeAnim = visShape(ϕ.+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, "t = $tstr"); 
-        else
-            frameFullAnim = visualise(ϕ, X, Y, ϵsq,"t = $tstr");
-            frameShapeAnim = visShape(ϕ, X, Y, "t = $tstr");
-        end
+
         if runAnim
+            frameFullAnim = visualise(ϕ, X, Y, ϵsq, "t = $tstr", αboost = αboost); 
+            frameShapeAnim = visShape(ϕ, X, Y, "t = $tstr", αboost = αboost); 
             frame(fullAnim, frameFullAnim)
             frame(shapeAnim, frameShapeAnim) 
         end
@@ -686,20 +695,22 @@ if runsim
     mp4(shapeAnim, simFP * "/sim_$simName-shape.mp4", fps = 4);
     plt = postPlot(Tn, ϕtot, ϵtot, Ncutoff); display(plt); 
 
-    pltLE = visualise(ϕ .+ αEvec*dϕ, X.+ αEvec*dX, Y.+ αEvec*dY, trStrSq(X, Y, Xdash, Ydash));
+    pltLE = visualise(ϕ, X, Y, trStrSq(X, Y, Xdash, Ydash), αboost = αboost);
     display(pltLE); savefig(pltLE, simFP * "/sim_$simName-evec.png")
 
     # EV2top = hcat(ϕ, X, Y);
     # @save "EVs//EV2top.jld2" EV2top;
 end
-# EV = EV1;
+# EV .= EV1;
 # pltEVEC = visualise(EV[:,1], EV[:,2], EV[:,3], 
-#                     trStrSq(EV[:,2], EV[:,3], FDX(EV[:,2]), FDX(EV[:,3])), "Eigenvector 1")
-# display(pltEVEC); savefig(pltEVEC, "EVs//EV1.png")
+#                     trStrSq(EV[:,2], EV[:,3], FDX(EV[:,2]), FDX(EV[:,3])), 
+#                     "Eigenvector 1", αboost = 2)
+# display(pltEVEC); savefig(pltEVEC, "TEMP.png") # savefig(pltEVEC, "EVs//EV1.png")
 
-# EV = EV2top;
-# pltEVEC3D = vis3D(EV[:,1], EV[:,2], EV[:,3], 10, "Eigenvector");
-# display(pltEVEC3D); 
+# EV .= EV3r;
+# pltEVEC3D = vis3D(EV[:,1], EV[:,2], EV[:,3], "Eigenvector", αboost3D = 10, deform = false);
+# scr = display(pltEVEC3D);
+# sleep(0.1); FileIO.save("snapshot.png", Makie.colorbuffer(scr)); # to save particular camera view etc.
 
 ############ -------------------------------------------------- ############
 ############ ---------------- TROUBLESHOOTING FULL STEPS ------------------ ############
