@@ -154,6 +154,9 @@ X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives
 Xundef = R0 * Cosξ; Yundef = R0 * Sinξ; # undeformed shape
 rXu =  X0 ./ r; rYu =  Y0 ./ r; # radial unit vectors
 
+trσ0sc = (r^2-R0^2)/R0^2 * F(ϕ0sc); # scalar initial (constant) trace of stress tensor 
+trσ0 = zeros(Ndisc) .+ trσ0sc; # over ξ-grid
+
 ZZ0 = hcat(ϕ0, X0, Y0); # full state vector, as Ndisc * 3 matrix 
 
 # -- 3D ICs --- #
@@ -180,6 +183,11 @@ function trStrSq(X, Y, Xdash, Ydash)
     t2 = (X.^2 ./ Cosξ.^2) .- R0^2;
 
     return 1/(4*R0^4) * (t1.^2 .+ t2.^2); 
+end
+
+function trStress(Fϕ, X, Y, Xdash, Ydash)
+    # trace of the stress tensor, σ_α^α = F(ϕ)ϵ_α^α 
+    return Fϕ .* 1/(2*R0^2) .* (Xdash.^2 .+ Ydash.^2 .+ (X.^2)./(Cosξ.^2) .- 2*R0^2);
 end
 
 function ElEn(Fϕ, X, Y, Xdash, Ydash)
@@ -470,21 +478,66 @@ function visRdef(ϕ, X, Y)
     return plt;
 end
 
-function visQtys(ϕ, ϵsq, titleTxt = false;
-                    plotE = true, plotTrig = false)
+function visQtys(ϕ, ϵsq, X, Y,
+                    titleTxt = false;
+                    plotE = true, plotTrig = false, plotStress = false)
     # plots morphogen and strain against S, returning plot object 
+    # additional functionality to plot a trigonometric function along with it to compare 
+    # spherical harmonics 
+    # finally, additinoal functionality to calculate and plot stress 
     plt = plot(ξi, ϕ, label = L"\varphi", lw = 1, line_z = ϕ, c = cmap, ls = :dash, 
                 xlabel = "ξ", ylabel = "Morphogen", legend = :topleft, colorbar = false,
                 legendfontsize = 12);
     if plotE
-        plot!(twinx(), ξi, ϵsq, label = L"\epsilon^2", lw = 2, line_z = ϕ, c = cmap,
+        plot!(twinx(), ξi, ϵsq, label = L"E^2", lw = 2, line_z = ϕ, c = cmap,
                 ylabel = "Strain", legend = :left, colorbar = false,
                 legendfontsize = 12)
     end
+
+    if plotStress
+        trσ = trStress(F.(ϕ), X, Y, FDX(Xdash), FDY(Ydash));
+        plot!(twinx(), ξi[2:end-1], trσ[2:end-1], label = L"\sigma_{\alpha}^{\alpha}", lw = 2, color = :black,
+                ylabel = "Strain", legend = :left, colorbar = false,
+                legendfontsize = 12)
+    end
+
     if plotTrig
         sinScaled = -Cosξ * (maximum(ϕ)-minimum(ϕ)) .+ (maximum(ϕ)+minimum(ϕ))/2;
         plot!(ξi, sinScaled, label = L"-\cos(ξ)", lw = 1, color = :red)
     end
+
+    if titleTxt isa String
+        title!(titleTxt)
+    end
+    return plt;
+end
+
+function visDqtys(ϕ, ϵsq, X, Y,
+                    titleTxt = false;
+                    plotE = true, plotStress = false)
+    # same as above but only plots perturbation in ϕ
+    plt = plot(ξi, ϕ .- ϕ0, label = L"\Delta\varphi", lw = 1, line_z = ϕ, c = cmap, ls = :dash, 
+                xlabel = "ξ", ylabel = "Morphogen", legend = :topleft, colorbar = false,
+                legendfontsize = 12);
+    if plotE
+        plot!(twinx(), ξi, ϵsq .- ϵ0, label = L"\Delta E^2", lw = 2, line_z = ϕ, c = cmap,
+                ylabel = "Strain", legend = :left, colorbar = false,
+                legendfontsize = 12)
+    end
+
+    if plotStress
+        trσ = trStress(F.(ϕ), X, Y, FDX(Xdash), FDY(Ydash));
+        tx = twinx();
+        plot!(tx, ξi[2:end-1], trσ[2:end-1], label = L"\sigma_{\alpha}^{\alpha}", lw = 2, color = :black,
+                ylabel = "Strain", legend = :left, colorbar = false,
+                legendfontsize = 12)
+
+        # plot!(tx, ξi[2:end-1], (trσ.*(ϕ.-ϕ0))[2:end-1], label = L"\sigma_{\alpha}^{\alpha}\times\Delta\varphi", color = :red)
+    end
+
+    println(integrateξdom(trσ.*(ϕ.-ϕ0)))
+    println(maximum((trσ.*(ϕ.-ϕ0))[2:end-1])/maximum(ϕ.-ϕ0))
+
     if titleTxt isa String
         title!(titleTxt)
     end
@@ -499,7 +552,7 @@ function visualise(ϕ, X, Y, ϵsq, titleTxt = false; αboost = 1)
     pltB = visRdef(ϕ, X, Y);
     # pltC = visDeform(ϕ, X, Y);
     pltC = visVecDeform(ϕ, X, Y);
-    pltD = visQtys(ϕ, ϵsq);
+    pltD = visQtys(ϕ, ϵsq, X, Y, plotE = true, plotStress = false);
     combined = plot(pltA, pltB, pltC, pltD, layout = (2,2), size=(800,600)); 
     if titleTxt isa String
         title!(titleTxt)
@@ -556,7 +609,7 @@ end
 ############ -------------------------------------------------- ############
 
 @load "EVs//EV1.jld2" EV1;
-dEV1 .- ZZ0; # the difference to steady state 
+dEV1 = EV1 .- ZZ0; # the difference to steady state 
 dEV1Norm = inp(dEV1, dEV1);
 
 @load "EVs//EV1r.jld2" EV1r;
@@ -606,7 +659,7 @@ runAnim = true;
 dZZ = zeros(Ndisc, 3); dϕ = zeros(Ndisc); dX = zeros(Ndisc); dY = zeros(Ndisc);
 EV = zeros(Ndisc, 3);
 
-runsim = true;
+runsim = false;
 doProj = true; # whether to project vs just do time evolution 
 
 tstart = time();
@@ -740,4 +793,9 @@ end
 ############ ---------------- OTHER TESTING CODE ------------------ ############
 ############ -------------------------------------------------- ############
 
+
+EV .= EV2top;
+pt = visDqtys(EV[:,1], trStrSq(EV[:,2], EV[:,3], FDX(EV[:,2]), FDY(EV[:,3])), EV[:,2], EV[:,3], "EV2",
+        plotStress = true, plotE = false);
+display(pt);
 
