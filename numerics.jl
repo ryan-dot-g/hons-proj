@@ -154,7 +154,10 @@ X0dash = -Y0[:]; Y0dash = X0[:]; # initial derivatives
 Xundef = R0 * Cosξ; Yundef = R0 * Sinξ; # undeformed shape
 rXu =  X0 ./ r; rYu =  Y0 ./ r; # radial unit vectors
 
-trσ0sc = (r^2-R0^2)/R0^2 * F(ϕ0sc); # scalar initial (constant) trace of stress tensor 
+trE0sc = (r^2-R0^2)/R0^2; # scalar initial (constant) trace of strain tensor
+trE0 = zeros(Ndisc) .+ trE0sc;
+
+trσ0sc = trE0sc * F(ϕ0sc); # scalar initial (constant) trace of stress tensor 
 trσ0 = zeros(Ndisc) .+ trσ0sc; # over ξ-grid
 
 ZZ0 = hcat(ϕ0, X0, Y0); # full state vector, as Ndisc * 3 matrix 
@@ -187,7 +190,12 @@ end
 
 function trStress(Fϕ, X, Y, Xdash, Ydash)
     # trace of the stress tensor, σ_α^α = F(ϕ)ϵ_α^α 
-    return Fϕ .* 1/(2*R0^2) .* (Xdash.^2 .+ Ydash.^2 .+ (X.^2)./(Cosξ.^2) .- 2*R0^2);
+    return Fϕ .* trStrain(X, Y, Xdash, Ydash);
+end
+
+function trStrain(X, Y, Xdash, Ydash)
+    # trace of the strain tensor, ϵ_α^α
+    return 1/(2*R0^2) .* (Xdash.^2 .+ Ydash.^2 .+ (X.^2)./(Cosξ.^2) .- 2*R0^2);
 end
 
 function ElEn(Fϕ, X, Y, Xdash, Ydash)
@@ -512,36 +520,56 @@ function visQtys(ϕ, ϵsq, X, Y,
     return plt;
 end
 
-function visDqtys(ϕ, ϵsq, X, Y,
-                    titleTxt = false;
-                    plotE = true, plotStress = false)
-    # same as above but only plots perturbation in ϕ
-    plt = plot(ξi, ϕ .- ϕ0, label = L"\Delta\varphi", lw = 1, line_z = ϕ, c = cmap, ls = :dash, 
-                xlabel = "ξ", ylabel = "Morphogen", legend = :topleft, colorbar = false,
+function visDqtys(ϕ, X, Y, titleTxt = false;
+                    plotTrE = false, plotStress = false)
+    # same as above but only plots perturbation in qtys, and stacks plots 
+
+    # first calculate necessary quantities 
+    dϕ = ϕ .- ϕ0;
+    trE = trStrain(X, Y, FDX(Xdash), FDY(Ydash));
+    dtrE = trE .- trE0;
+    trσ = trStress(F.(ϕ), X, Y, FDX(Xdash), FDY(Ydash));
+    dtrσ = trσ .- trσ0; 
+
+    plts = Vector{Any}();
+
+    nplots = 1;
+    plt = plot(ξi, dϕ/ϕ0sc, label = L"\Delta\varphi", lw = 2, color = nplots;
+                xlabel = "ξ", ylabel = "% Morph", legend = :left,
                 legendfontsize = 12);
-    if plotE
-        plot!(twinx(), ξi, ϵsq .- ϵ0, label = L"\Delta E^2", lw = 2, line_z = ϕ, c = cmap,
-                ylabel = "Strain", legend = :left, colorbar = false,
-                legendfontsize = 12)
-    end
-
-    if plotStress
-        trσ = trStress(F.(ϕ), X, Y, FDX(Xdash), FDY(Ydash));
-        tx = twinx();
-        plot!(tx, ξi[2:end-1], trσ[2:end-1], label = L"\sigma_{\alpha}^{\alpha}", lw = 2, color = :black,
-                ylabel = "Strain", legend = :left, colorbar = false,
-                legendfontsize = 12)
-
-        # plot!(tx, ξi[2:end-1], (trσ.*(ϕ.-ϕ0))[2:end-1], label = L"\sigma_{\alpha}^{\alpha}\times\Delta\varphi", color = :red)
-    end
-
-    println(integrateξdom(trσ.*(ϕ.-ϕ0)))
-    println(maximum((trσ.*(ϕ.-ϕ0))[2:end-1])/maximum(ϕ.-ϕ0))
-
     if titleTxt isa String
         title!(titleTxt)
     end
-    return plt;
+    push!(plts, plt); nplots += 1;
+
+    if plotTrE
+        plt = plot(ξi[2:end-1], dtrE[2:end-1]/trE0sc, label = L"\delta\epsilon_{\alpha}^{\alpha}", lw = 2, color = nplots;
+                xlabel = "ξ", ylabel = "% Strain", legend = :bottomleft,
+                legendfontsize = 12);
+        push!(plts, plt); nplots += 1;
+    end
+
+    if plotStress
+        plt = plot(ξi[2:end-1], dtrσ[2:end-1]/trσ0sc, label = L"\delta\sigma_{\alpha}^{\alpha}", lw = 2, color = nplots;
+                xlabel = "ξ", ylabel = "% Stress", legend = :left,
+                legendfontsize = 12);
+        push!(plts, plt); nplots += 1;
+    end
+    
+    pltbig = plot(plts...; layout = (nplots-1, 1));
+
+    # experimenting 
+    pexp = scatter(dϕ[2:end-1], dtrE[2:end-1], 
+                    xlabel = L"\varphi", ylabel = L"\delta\epsilon_{\alpha}^{\alpha}",
+                    legend = false)
+    scatter!([0],[0]); 
+    if titleTxt isa String
+        title!(titleTxt)
+    end
+    display(pexp)
+
+
+    return pltbig;
 end
 
 function visualise(ϕ, X, Y, ϵsq, titleTxt = false; αboost = 1)
@@ -641,10 +669,10 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 # now morphogen array
 ϕ = zeros(Ndisc);
 # ϕ .= ϕ0topBump;  
-ϕ .= ϕ0sideBump;
+# ϕ .= ϕ0sideBump;
 # ϕ .= ϕ0bottomBump;
 # ϕ .= ϕ0doubleBump;
-# ϕ .= ϕ0bumpy;
+ϕ .= ϕ0bumpy;
 # ϕ .= ϕ0; 
 
 # save initial strain squared
@@ -654,12 +682,12 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 fullAnim = Animation();
 shapeAnim = Animation();
 simName = "temp"; # "temp"
-runAnim = true;
+runAnim = false;
 
 dZZ = zeros(Ndisc, 3); dϕ = zeros(Ndisc); dX = zeros(Ndisc); dY = zeros(Ndisc);
 EV = zeros(Ndisc, 3);
 
-runsim = false;
+runsim = true;
 doProj = true; # whether to project vs just do time evolution 
 
 tstart = time();
@@ -744,8 +772,11 @@ if runsim
     end
 
     # save and plot relevant objects
-    mp4(fullAnim, simFP * "/sim_$simName-full.mp4", fps = 4);
-    mp4(shapeAnim, simFP * "/sim_$simName-shape.mp4", fps = 4);
+    if runAnim
+        mp4(fullAnim, simFP * "/sim_$simName-full.mp4", fps = 4);
+        mp4(shapeAnim, simFP * "/sim_$simName-shape.mp4", fps = 4);
+    end
+
     plt = postPlot(Tn, ϕtot, ϵtot, Ncutoff); display(plt); 
 
     pltLE = visualise(ϕ, X, Y, trStrSq(X, Y, Xdash, Ydash), αboost = αboost);
@@ -792,10 +823,12 @@ end
 ############ -------------------------------------------------- ############
 ############ ---------------- OTHER TESTING CODE ------------------ ############
 ############ -------------------------------------------------- ############
-
-
-EV .= EV2top;
-pt = visDqtys(EV[:,1], trStrSq(EV[:,2], EV[:,3], FDX(EV[:,2]), FDY(EV[:,3])), EV[:,2], EV[:,3], "EV2",
-        plotStress = true, plotE = false);
+pt = visDqtys(ϕ, X, Y, "Mid-projection";
+        plotTrE = true, plotStress = false);
 display(pt);
+
+# EV .= EV2;
+# pt = visDqtys(EV[:,1], EV[:,2], EV[:,3], "EV2";
+#         plotTrE = true, plotStress = true);
+# display(pt);
 
