@@ -10,6 +10,7 @@ using Plots, LaTeXStrings; # plot stuff
 import GLMakie, Makie, FileIO; # 3D plot stuff 
 using Optim, ForwardDiff; # optimisation
 using JLD2; # deprecated?
+using Polynomials; # testing 
 println("running...");
 
 ############ -------------------------------------------------- ############
@@ -43,7 +44,7 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on ξ (40)
 ξmin = -π/2; ξmax = π/2; # bounds of ξ values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.03) 
-tmax = 40*dt; # max time (400 * dt for evec). 
+tmax = 70*dt; # max time (400 * dt for evec). 
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
 dξint = 0.01; # small number: distance inside the ξ grid to start at to avoid div0
@@ -505,7 +506,7 @@ function visQtys(ϕ, ϵsq, X, Y,
     if plotStress
         trσ = trStress(F.(ϕ), X, Y, FDX(Xdash), FDY(Ydash));
         plot!(twinx(), ξi[2:end-1], trσ[2:end-1], label = L"\sigma_{\alpha}^{\alpha}", lw = 2, color = :black,
-                ylabel = "Strain", legend = :left, colorbar = false,
+                ylabel = "Stress", legend = :left, colorbar = false,
                 legendfontsize = 12)
     end
 
@@ -532,10 +533,16 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
     dtrσ = trσ .- trσ0; 
 
     plts = Vector{Any}();
+    intr = 0; # how many edge points to exclude
+
+    # fixes to make it density 
+    # dϕ = dϕ .* Cosξ;
+    # dtrE = dtrE .* Cosξ;
+    # dtrσ = dtrσ .* Cosξ;
 
     nplots = 1;
-    plt = plot(ξi, dϕ/ϕ0sc, label = L"\Delta\varphi", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = "% Morph", legend = :left,
+    plt = plot(ξi, dϕ/ϕ0sc*100, label = L"\delta\varphi", lw = 2, color = nplots;
+                xlabel = "ξ", ylabel = "% Morph dens", legend = :left,
                 legendfontsize = 12);
     if titleTxt isa String
         title!(titleTxt)
@@ -543,15 +550,15 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
     push!(plts, plt); nplots += 1;
 
     if plotTrE
-        plt = plot(ξi[2:end-1], dtrE[2:end-1]/trE0sc, label = L"\delta\epsilon_{\alpha}^{\alpha}", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = "% Strain", legend = :bottomleft,
+        plt = plot(ξi[intr+1:end-intr], dtrE[intr+1:end-intr]/trE0sc*100, label = L"\delta\epsilon_{\alpha}^{\alpha}", lw = 2, color = nplots;
+                xlabel = "ξ", ylabel = "% Strain dens", legend = :bottomleft,
                 legendfontsize = 12);
         push!(plts, plt); nplots += 1;
     end
 
     if plotStress
-        plt = plot(ξi[2:end-1], dtrσ[2:end-1]/trσ0sc, label = L"\delta\sigma_{\alpha}^{\alpha}", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = "% Stress", legend = :left,
+        plt = plot(ξi[intr+1:end-intr], dtrσ[intr+1:end-intr]/trσ0sc*100, label = L"\delta\sigma_{\alpha}^{\alpha}", lw = 2, color = nplots;
+                xlabel = "ξ", ylabel = "% Stress dens", legend = :left,
                 legendfontsize = 12);
         push!(plts, plt); nplots += 1;
     end
@@ -559,13 +566,16 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
     pltbig = plot(plts...; layout = (nplots-1, 1));
 
     # experimenting 
-    pexp = scatter(dϕ[2:end-1], dtrE[2:end-1], 
-                    xlabel = L"\varphi", ylabel = L"\delta\epsilon_{\alpha}^{\alpha}",
+    pexp = scatter(dϕ[intr+1:end-intr], dtrE[intr+1:end-intr], 
+                    xlabel = L"\delta\varphi", ylabel = L"\delta\epsilon_{\alpha}^{\alpha}",
                     legend = false)
-    scatter!([0],[0]); 
+    scatter!([0],[0], color = 2);
     if titleTxt isa String
         title!(titleTxt)
     end
+    linfit = fit(dϕ[intr+1:end-intr], dtrE[intr+1:end-intr], 1)   # degree-1 polynomial
+    print(coeffs(linfit));
+
     display(pexp)
 
 
@@ -580,7 +590,7 @@ function visualise(ϕ, X, Y, ϵsq, titleTxt = false; αboost = 1)
     pltB = visRdef(ϕ, X, Y);
     # pltC = visDeform(ϕ, X, Y);
     pltC = visVecDeform(ϕ, X, Y);
-    pltD = visQtys(ϕ, ϵsq, X, Y, plotE = true, plotStress = false);
+    pltD = visQtys(ϕ, ϵsq, X, Y, plotE = false, plotStress = true);
     combined = plot(pltA, pltB, pltC, pltD, layout = (2,2), size=(800,600)); 
     if titleTxt isa String
         title!(titleTxt)
@@ -682,13 +692,13 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 fullAnim = Animation();
 shapeAnim = Animation();
 simName = "temp"; # "temp"
-runAnim = false;
+runAnim = true;
 
 dZZ = zeros(Ndisc, 3); dϕ = zeros(Ndisc); dX = zeros(Ndisc); dY = zeros(Ndisc);
 EV = zeros(Ndisc, 3);
 
 runsim = true;
-doProj = true; # whether to project vs just do time evolution 
+doProj = false; # whether to project vs just do time evolution 
 
 tstart = time();
 if runsim
@@ -710,7 +720,7 @@ if runsim
         morphRes = UpdateMorphogen!(ϕ, X, Y, ϵsq);
 
         # Step B1: project onto eigenvector 
-        if doProj
+        if doProj || n==1
             (dZZ, projRes, evalEst) = 
                 ProjectEvec!(ϕ, X, Y; 
                     dEVs =      [], 
@@ -779,8 +789,10 @@ if runsim
 
     plt = postPlot(Tn, ϕtot, ϵtot, Ncutoff); display(plt); 
 
-    pltLE = visualise(ϕ, X, Y, trStrSq(X, Y, Xdash, Ydash), αboost = αboost);
-    display(pltLE); savefig(pltLE, simFP * "/sim_$simName-evec.png")
+    if doProj
+        pltLE = visualise(ϕ, X, Y, trStrSq(X, Y, Xdash, Ydash), αboost = αboost);
+        display(pltLE); savefig(pltLE, simFP * "/sim_$simName-evec.png")
+    end
 
     # EV2top = hcat(ϕ, X, Y);
     # @save "EVs//EV2top.jld2" EV2top;
@@ -823,12 +835,12 @@ end
 ############ -------------------------------------------------- ############
 ############ ---------------- OTHER TESTING CODE ------------------ ############
 ############ -------------------------------------------------- ############
-pt = visDqtys(ϕ, X, Y, "Mid-projection";
-        plotTrE = true, plotStress = false);
-display(pt);
+# pt = visDqtys(ϕ, X, Y, "Time evolution, t = 3 steps, different IC";
+#         plotTrE = true, plotStress = false);
+# display(pt);
 
-# EV .= EV2;
-# pt = visDqtys(EV[:,1], EV[:,2], EV[:,3], "EV2";
+# EV .= EV1r;
+# pt = visDqtys(EV[:,1], EV[:,2], EV[:,3], "EV1";
 #         plotTrE = true, plotStress = true);
 # display(pt);
 
