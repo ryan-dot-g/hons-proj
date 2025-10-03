@@ -161,6 +161,9 @@ trE0 = zeros(Ndisc) .+ trE0sc;
 trσ0sc = trE0sc * F(ϕ0sc); # scalar initial (constant) trace of stress tensor 
 trσ0 = zeros(Ndisc) .+ trσ0sc; # over ξ-grid
 
+trb0sc = -2/r; # scalar initial (constant) trace of curvature tensor 
+trb0 = zeros(Ndisc) .+ trb0sc;
+
 ZZ0 = hcat(ϕ0, X0, Y0); # full state vector, as Ndisc * 3 matrix 
 
 # -- 3D ICs --- #
@@ -189,14 +192,22 @@ function trStrSq(X, Y, Xdash, Ydash)
     return 1/(4*R0^4) * (t1.^2 .+ t2.^2); 
 end
 
+function trStrain(X, Y, Xdash, Ydash)
+    # trace of the strain tensor, ϵ_α^α
+    return 1/(2*R0^2) .* (Xdash.^2 .+ Ydash.^2 .+ (X.^2)./(Cosξ.^2) .- 2*R0^2);
+end
+
 function trStress(Fϕ, X, Y, Xdash, Ydash)
     # trace of the stress tensor, σ_α^α = F(ϕ)ϵ_α^α 
     return Fϕ .* trStrain(X, Y, Xdash, Ydash);
 end
 
-function trStrain(X, Y, Xdash, Ydash)
-    # trace of the strain tensor, ϵ_α^α
-    return 1/(2*R0^2) .* (Xdash.^2 .+ Ydash.^2 .+ (X.^2)./(Cosξ.^2) .- 2*R0^2);
+function trCurv(X, Y, Xdash, Ydash)
+    # trace of the curvature tensor 
+    rsq = Xdash.^2 .+ Ydash.^2;
+    d1 = Ydash.*FDX(Xdash) .- Xdash.*FDY(Ydash); # denominator of first term 
+    d2 = Ydash;
+    return d1./(rsq.^(3/2)) .- d2./(X.*sqrt.(rsq));
 end
 
 function ElEn(Fϕ, X, Y, Xdash, Ydash)
@@ -522,18 +533,23 @@ function visQtys(ϕ, ϵsq, X, Y,
 end
 
 function visDqtys(ϕ, X, Y, titleTxt = false;
-                    plotTrE = false, plotStress = false)
+                    plotTrE = false, plotStress = false, plotCurv = false)
     # same as above but only plots perturbation in qtys, and stacks plots 
 
     # first calculate necessary quantities 
+    Xdash = FDX(X); Ydash = FDY(Y);
+
     dϕ = ϕ .- ϕ0;
-    trE = trStrain(X, Y, FDX(Xdash), FDY(Ydash));
+    trE = trStrain(X, Y, Xdash, Ydash);
     dtrE = trE .- trE0;
-    trσ = trStress(F.(ϕ), X, Y, FDX(Xdash), FDY(Ydash));
+    trσ = trStress(F.(ϕ), X, Y, Xdash, Ydash);
     dtrσ = trσ .- trσ0; 
+    trb = trCurv(X, Y, Xdash, Ydash);
+    dtrb = trb .- trb0;
 
     plts = Vector{Any}();
-    intr = 0; # how many edge points to exclude
+    intr = 2; # how many edge points to exclude
+    ξcut = ξi[intr+1:end-intr];
 
     # fixes to make it density 
     # dϕ = dϕ .* Cosξ;
@@ -541,8 +557,8 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
     # dtrσ = dtrσ .* Cosξ;
 
     nplots = 1;
-    plt = plot(ξi, dϕ/ϕ0sc*100, label = L"\delta\varphi", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = "% Morph dens", legend = :left,
+    plt = plot(ξcut, dϕ[intr+1:end-intr]/ϕ0sc*100, label = L"\delta\varphi", lw = 2, color = nplots;
+                xlabel = "ξ", ylabel = "% Morph", legend = :left,
                 legendfontsize = 12);
     if titleTxt isa String
         title!(titleTxt)
@@ -550,33 +566,41 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
     push!(plts, plt); nplots += 1;
 
     if plotTrE
-        plt = plot(ξi[intr+1:end-intr], dtrE[intr+1:end-intr]/trE0sc*100, label = L"\delta\epsilon_{\alpha}^{\alpha}", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = "% Strain dens", legend = :bottomleft,
+        plt = plot(ξcut, dtrE[intr+1:end-intr]/trE0sc*100, label = L"\delta \epsilon_{\alpha}^{\alpha}", lw = 2, color = nplots;
+                xlabel = "ξ", ylabel = "% Strain", legend = :left,
                 legendfontsize = 12);
         push!(plts, plt); nplots += 1;
     end
 
     if plotStress
-        plt = plot(ξi[intr+1:end-intr], dtrσ[intr+1:end-intr]/trσ0sc*100, label = L"\delta\sigma_{\alpha}^{\alpha}", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = "% Stress dens", legend = :left,
+        plt = plot(ξcut, dtrσ[intr+1:end-intr]/trσ0sc*100, label = L"\delta\sigma_{\alpha}^{\alpha}", lw = 2, color = nplots;
+                xlabel = "ξ", ylabel = "% Stress", legend = :left,
+                legendfontsize = 12);
+        push!(plts, plt); nplots += 1;
+    end
+
+    if plotCurv
+        plt = plot(ξcut, dtrb[intr+1:end-intr]/trb0sc*100, label = L"\delta b_{\alpha}^{\alpha}", lw = 2, color = nplots;
+                xlabel = "ξ", ylabel = "% Curvature", legend = :left,
                 legendfontsize = 12);
         push!(plts, plt); nplots += 1;
     end
     
-    pltbig = plot(plts...; layout = (nplots-1, 1));
+    wd = 660;
+    ht = 200 * (nplots-1);
+    pltbig = plot(plts...; layout = (nplots-1, 1), size = (wd, ht))
 
     # experimenting 
-    pexp = scatter(dϕ[intr+1:end-intr], dtrE[intr+1:end-intr], 
-                    xlabel = L"\delta\varphi", ylabel = L"\delta\epsilon_{\alpha}^{\alpha}",
-                    legend = false)
-    scatter!([0],[0], color = 2);
-    if titleTxt isa String
-        title!(titleTxt)
-    end
-    linfit = fit(dϕ[intr+1:end-intr], dtrE[intr+1:end-intr], 1)   # degree-1 polynomial
-    print(coeffs(linfit));
-
-    display(pexp)
+    # pexp = scatter(dϕ[intr+1:end-intr], dtrE[intr+1:end-intr], 
+    #                 xlabel = L"\delta\varphi", ylabel = L"\delta\epsilon_{\alpha}^{\alpha}",
+    #                 legend = false)
+    # scatter!([0],[0], color = 2);
+    # if titleTxt isa String
+    #     title!(titleTxt)
+    # end
+    # linfit = fit(dϕ[intr+1:end-intr], dtrE[intr+1:end-intr], 1)   # degree-1 polynomial
+    # print(coeffs(linfit));
+    # display(pexp)
 
 
     return pltbig;
@@ -697,7 +721,7 @@ runAnim = true;
 dZZ = zeros(Ndisc, 3); dϕ = zeros(Ndisc); dX = zeros(Ndisc); dY = zeros(Ndisc);
 EV = zeros(Ndisc, 3);
 
-runsim = true;
+runsim = false;
 doProj = false; # whether to project vs just do time evolution 
 
 tstart = time();
@@ -787,7 +811,7 @@ if runsim
         mp4(shapeAnim, simFP * "/sim_$simName-shape.mp4", fps = 4);
     end
 
-    plt = postPlot(Tn, ϕtot, ϵtot, Ncutoff); display(plt); 
+    # plt = postPlot(Tn, ϕtot, ϵtot, Ncutoff); display(plt); 
 
     if doProj
         pltLE = visualise(ϕ, X, Y, trStrSq(X, Y, Xdash, Ydash), αboost = αboost);
@@ -839,8 +863,8 @@ end
 #         plotTrE = true, plotStress = false);
 # display(pt);
 
-# EV .= EV1r;
-# pt = visDqtys(EV[:,1], EV[:,2], EV[:,3], "EV1";
-#         plotTrE = true, plotStress = true);
-# display(pt);
+EV .= EV1r;
+pt = visDqtys(EV[:,1], EV[:,2], EV[:,3], "EV1";
+        plotTrE = true, plotStress = true, plotCurv = true);
+display(pt);
 
