@@ -414,7 +414,7 @@ function visShape(ϕ, X, Y, titleTxt = false; αboost = 1)
 
     # Plot actual deformed shape, colored by morphogen concentration 
     plt = plot(X, Y, line_z = ϕ, lw = 5, alpha = 0.7,
-                c = cmap, colorbar_title = "φ",
+                c = cmap, colorbar_title = L"\varphi",
                 label = "Hydra shape", 
                 aspect_ratio = :equal, legend = :topright);
     plot!(-X, Y, line_z = ϕ, lw = 3, alpha = 0.7,
@@ -551,43 +551,38 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
     intr = 2; # how many edge points to exclude
     ξcut = ξi[intr+1:end-intr];
 
-    # fixes to make it density 
-    # dϕ = dϕ .* Cosξ;
-    # dtrE = dtrE .* Cosξ;
-    # dtrσ = dtrσ .* Cosξ;
-
     nplots = 1;
     plt = plot(ξcut, dϕ[intr+1:end-intr]/ϕ0sc*100, label = L"\delta\varphi", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = "% Morph", legend = :left,
+                xlabel = "ξ", ylabel = L"\% \varphi", legend = :left,
                 legendfontsize = 12);
-    if titleTxt isa String
-        title!(titleTxt)
-    end
+    # if titleTxt isa String
+    #     title!(titleTxt)
+    # end
     push!(plts, plt); nplots += 1;
 
     if plotTrE
         plt = plot(ξcut, dtrE[intr+1:end-intr]/trE0sc*100, label = L"\delta \epsilon_{\alpha}^{\alpha}", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = "% Strain", legend = :left,
+                xlabel = "ξ", ylabel = L"\% \epsilon", legend = :left,
                 legendfontsize = 12);
         push!(plts, plt); nplots += 1;
     end
 
     if plotStress
         plt = plot(ξcut, dtrσ[intr+1:end-intr]/trσ0sc*100, label = L"\delta\sigma_{\alpha}^{\alpha}", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = "% Stress", legend = :left,
+                xlabel = "ξ", ylabel = L"\% \sigma", legend = :left,
                 legendfontsize = 12);
         push!(plts, plt); nplots += 1;
     end
 
     if plotCurv
         plt = plot(ξcut, dtrb[intr+1:end-intr]/trb0sc*100, label = L"\delta b_{\alpha}^{\alpha}", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = "% Curvature", legend = :left,
+                xlabel = "ξ", ylabel = L"\% b", legend = :left,
                 legendfontsize = 12);
         push!(plts, plt); nplots += 1;
     end
     
     wd = 660;
-    ht = 200 * (nplots-1);
+    ht = 125 * (nplots-1);
     pltbig = plot(plts...; layout = (nplots-1, 1), size = (wd, ht))
 
     # experimenting 
@@ -606,19 +601,29 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
     return pltbig;
 end
 
+# function visualise(ϕ, X, Y, ϵsq, titleTxt = false; αboost = 1)
+#     # wrapper visualisation function to display all relevant plots at once 
+#     # αboost: increases perturbation. Set to 1 for no boost
+#     X = X0 .+ αboost*(X .- X0); Y = Y0 .+ αboost*(Y .- Y0);
+#     pltA = visShape(ϕ, X, Y); 
+#     pltB = visRdef(ϕ, X, Y);
+#     # pltC = visDeform(ϕ, X, Y);
+#     pltC = visVecDeform(ϕ, X, Y);
+#     pltD = visQtys(ϕ, ϵsq, X, Y, plotE = false, plotStress = true);
+#     combined = plot(pltA, pltB, pltC, pltD, layout = (2,2), size=(800,600)); 
+#     if titleTxt isa String
+#         title!(titleTxt)
+#     end
+#     return combined;
+# end
+
 function visualise(ϕ, X, Y, ϵsq, titleTxt = false; αboost = 1)
     # wrapper visualisation function to display all relevant plots at once 
     # αboost: increases perturbation. Set to 1 for no boost
     X = X0 .+ αboost*(X .- X0); Y = Y0 .+ αboost*(Y .- Y0);
-    pltA = visShape(ϕ, X, Y); 
-    pltB = visRdef(ϕ, X, Y);
-    # pltC = visDeform(ϕ, X, Y);
-    pltC = visVecDeform(ϕ, X, Y);
-    pltD = visQtys(ϕ, ϵsq, X, Y, plotE = false, plotStress = true);
-    combined = plot(pltA, pltB, pltC, pltD, layout = (2,2), size=(800,600)); 
-    if titleTxt isa String
-        title!(titleTxt)
-    end
+    pltA = visShape(ϕ, X, Y, titleTxt); 
+    pltB = visDqtys(ϕ, X, Y; plotTrE = true, plotStress = true, plotCurv = true);
+    combined = plot(pltA, pltB, layout = (1,2)); 
     return combined;
 end
 
@@ -721,7 +726,7 @@ runAnim = true;
 dZZ = zeros(Ndisc, 3); dϕ = zeros(Ndisc); dX = zeros(Ndisc); dY = zeros(Ndisc);
 EV = zeros(Ndisc, 3);
 
-runsim = false;
+runsim = true;
 doProj = false; # whether to project vs just do time evolution 
 
 tstart = time();
@@ -863,8 +868,11 @@ end
 #         plotTrE = true, plotStress = false);
 # display(pt);
 
-EV .= EV1r;
-pt = visDqtys(EV[:,1], EV[:,2], EV[:,3], "EV1";
-        plotTrE = true, plotStress = true, plotCurv = true);
-display(pt);
+# EV .= EV1r;
+# pt = visDqtys(EV[:,1], EV[:,2], EV[:,3], "EV1";
+#         plotTrE = true, plotStress = true, plotCurv = true);
+# display(pt);
 
+EV .= EV1r;
+pt = visualise(EV[:,1], EV[:,2], EV[:,3], 3, "EV1")
+display(pt);
