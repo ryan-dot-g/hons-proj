@@ -6,7 +6,7 @@
 
 
 using LinearAlgebra, DifferentialEquations, BandedMatrices; # calculations
-using Plots, LaTeXStrings; # plot stuff 
+using Plots, LaTeXStrings;
 import GLMakie, Makie, FileIO; # 3D plot stuff 
 using Optim, ForwardDiff; # optimisation
 using JLD2; # deprecated?
@@ -412,13 +412,14 @@ function visShape(ϕ, X, Y, titleTxt = false; αboost = 1)
     # αboost: enhances perturbation, set to 1 for no perturbation
     X = X0 .+ αboost*(X .- X0); Y = Y0 .+ αboost*(Y .- Y0);
 
+    ticks = collect(range(minimum(ϕ), maximum(ϕ), 5))
+
     # Plot actual deformed shape, colored by morphogen concentration 
     plt = plot(X, Y, line_z = ϕ, lw = 5, alpha = 0.7,
-                c = cmap, colorbar_title = L"\varphi",
+                c = cmap, colorbar_title = "φ",
                 label = "Hydra shape", 
                 aspect_ratio = :equal, legend = :topright);
-    plot!(-X, Y, line_z = ϕ, lw = 3, alpha = 0.7,
-                c = cmap, label = "")
+    plot!(-X, Y, line_z = ϕ, lw = 3, alpha = 0.7, c = cmap, label = "")
 
     # Plot material points 
     scatter!(X, Y, ms = 1.5, color = :black, label = "")
@@ -553,31 +554,31 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
 
     nplots = 1;
     plt = plot(ξcut, dϕ[intr+1:end-intr]/ϕ0sc*100, label = L"\delta\varphi", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = L"\% \varphi", legend = :left,
-                legendfontsize = 12);
+                xlabel = "", ylabel = "% φ", legend = :left,
+                legendfontsize = 10);
     # if titleTxt isa String
     #     title!(titleTxt)
     # end
     push!(plts, plt); nplots += 1;
 
     if plotTrE
-        plt = plot(ξcut, dtrE[intr+1:end-intr]/trE0sc*100, label = L"\delta \epsilon_{\alpha}^{\alpha}", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = L"\% \epsilon", legend = :left,
-                legendfontsize = 12);
+        plt = plot(ξcut, dtrE[intr+1:end-intr]/trE0sc*100, label = L"\delta E_{\alpha}^{\alpha}", lw = 2, color = nplots;
+                xlabel = "", ylabel = "% E", legend = :left,
+                legendfontsize = 10);
         push!(plts, plt); nplots += 1;
     end
 
     if plotStress
         plt = plot(ξcut, dtrσ[intr+1:end-intr]/trσ0sc*100, label = L"\delta\sigma_{\alpha}^{\alpha}", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = L"\% \sigma", legend = :left,
-                legendfontsize = 12);
+                xlabel = "", ylabel = "% σ", legend = :left,
+                legendfontsize = 10);
         push!(plts, plt); nplots += 1;
     end
 
     if plotCurv
         plt = plot(ξcut, dtrb[intr+1:end-intr]/trb0sc*100, label = L"\delta b_{\alpha}^{\alpha}", lw = 2, color = nplots;
-                xlabel = "ξ", ylabel = L"\% b", legend = :left,
-                legendfontsize = 12);
+                xlabel = "ξ", ylabel = "% b", legend = :left,
+                legendfontsize = 10);
         push!(plts, plt); nplots += 1;
     end
     
@@ -587,7 +588,7 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
 
     # experimenting 
     # pexp = scatter(dϕ[intr+1:end-intr], dtrE[intr+1:end-intr], 
-    #                 xlabel = L"\delta\varphi", ylabel = L"\delta\epsilon_{\alpha}^{\alpha}",
+    #                 xlabel = L"\delta\varphi", ylabel = L"\delta E_{\alpha}^{\alpha}",
     #                 legend = false)
     # scatter!([0],[0], color = 2);
     # if titleTxt isa String
@@ -634,7 +635,7 @@ function postPlot(Tn, ϕtot, ϵtot, Ncutoff)
                 color = :blue, lw = 2,
                 title = "Hydra dynamics", xlabel = "t (hr)" * L"^{-1}", ylabel = "Total morphogen",
                 legend = :topleft);
-    plot!(twinx(), Tn[1:Ncutoff], ϵtot[1:Ncutoff], label = L"\epsilon^2", 
+    plot!(twinx(), Tn[1:Ncutoff], ϵtot[1:Ncutoff], label = L"E^2", 
             color = :red, lw = 2,
             ylabel = "Total strain", legend = :left)
     return plt;
@@ -710,8 +711,8 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 # ϕ .= ϕ0topBump;  
 # ϕ .= ϕ0sideBump;
 # ϕ .= ϕ0bottomBump;
-# ϕ .= ϕ0doubleBump;
-ϕ .= ϕ0bumpy;
+ϕ .= ϕ0doubleBump;
+# ϕ .= ϕ0bumpy;
 # ϕ .= ϕ0; 
 
 # save initial strain squared
@@ -726,7 +727,7 @@ runAnim = true;
 dZZ = zeros(Ndisc, 3); dϕ = zeros(Ndisc); dX = zeros(Ndisc); dY = zeros(Ndisc);
 EV = zeros(Ndisc, 3);
 
-runsim = true;
+runsim = false;
 doProj = false; # whether to project vs just do time evolution 
 
 tstart = time();
@@ -873,6 +874,6 @@ end
 #         plotTrE = true, plotStress = true, plotCurv = true);
 # display(pt);
 
-EV .= EV1r;
+EV .= EV2top;
 pt = visualise(EV[:,1], EV[:,2], EV[:,3], 3, "EV1")
-display(pt);
+display(pt); 
