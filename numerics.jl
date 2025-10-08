@@ -1,15 +1,10 @@
-### TODO 
-# SHORT TERM:
-# - 
-# LONG TERM:
-# - 
 
 
 using LinearAlgebra, DifferentialEquations, BandedMatrices; # calculations
-using Plots, LaTeXStrings;
-import GLMakie, Makie, FileIO; # 3D plot stuff 
+using Plots, LaTeXStrings, Measures; # plots
+import GLMakie, Makie, FileIO; # 3D plots 
 using Optim, ForwardDiff; # optimisation
-using JLD2; # deprecated?
+# using JLD2; # deprecated?
 using Polynomials; # testing 
 println("running...");
 
@@ -61,6 +56,7 @@ cfl = 2 * D * dt / (π/Ndisc)^2; # cfl condition for diffusion, checking sensibl
 plotRes = 1; # how many timesteps per plot (Inf for just 1st and last plots)
 cmap = cgrad(:viridis); # colormap for morphogen concentration 
 αboost = 2; # factor to plot the eigenvector (1 to plot it exactly as seen) (2)
+spacer() = plot(legend=false, framestyle = :none, grid=false, xlims=(0,.1), ylims=(0,.1))
 
 ############ -------------------------------------------------- ############
 ############ ---------------- NUMERICAL SETUP ----------------- ############
@@ -417,13 +413,16 @@ function visShape(ϕ, X, Y, titleTxt = false; αboost = 1)
     # Plot actual deformed shape, colored by morphogen concentration 
     plt = plot(X, Y, line_z = ϕ, lw = 5, alpha = 0.7,
                 c = cmap, colorbar_title = "φ",
-                label = "Hydra shape", 
+                label = "", 
                 aspect_ratio = :equal, legend = :topright);
     plot!(-X, Y, line_z = ϕ, lw = 3, alpha = 0.7, c = cmap, label = "")
 
     # Plot material points 
     scatter!(X, Y, ms = 1.5, color = :black, label = "")
     scatter!(-X, Y, ms = 1.5, color = :black, label = "")
+
+    # dummy bit to get hydra shape in legend 
+    scatter!([1000, 2000], [1000, 2000], ms = 0.3, color = :black, label = "Hydra shape")
 
     # plot initial shape 
     plot!(X0, Y0, lw = 1, color = :grey, ls = :dash, label = "Steady-state"); 
@@ -506,12 +505,15 @@ function visQtys(ϕ, ϵsq, X, Y,
     # additional functionality to plot a trigonometric function along with it to compare 
     # spherical harmonics 
     # finally, additinoal functionality to calculate and plot stress 
-    plt = plot(ξi, ϕ, label = L"\varphi", lw = 1, line_z = ϕ, c = cmap, ls = :dash, 
+    intr = 2; # how many edge points to exclude
+    ξcut = ξi[intr+1:end-intr];
+
+    plt = plot(ξcut, ϕ[intr+1:end-intr], label = L"\varphi", lw = 1, line_z = ϕ, c = cmap, 
                 xlabel = "ξ", ylabel = "Morphogen", legend = :topleft, colorbar = false,
                 legendfontsize = 12);
     if plotE
-        plot!(twinx(), ξi, ϵsq, label = L"E^2", lw = 2, line_z = ϕ, c = cmap,
-                ylabel = "Strain", legend = :left, colorbar = false,
+        plot!(twinx(), ξcut, ϵsq[intr+1:end-intr], label = L"E^2", lw = 2, color = :black, ls = :dash,
+                ylabel = "Strain", legend = :left,
                 legendfontsize = 12)
     end
 
@@ -523,8 +525,10 @@ function visQtys(ϕ, ϵsq, X, Y,
     end
 
     if plotTrig
-        sinScaled = -Cosξ * (maximum(ϕ)-minimum(ϕ)) .+ (maximum(ϕ)+minimum(ϕ))/2;
-        plot!(ξi, sinScaled, label = L"-\cos(ξ)", lw = 1, color = :red)
+        # sinScaled = -Cosξ * (maximum(ϕ)-minimum(ϕ)) .+ (maximum(ϕ)+minimum(ϕ))/2;
+        sinScaled = -cos.(2*ξi) * (maximum(ϕ)-minimum(ϕ))/2;
+        sinScaled .-= sinScaled[end÷2] - ϕ[end÷2];
+        plot!(ξi, sinScaled, label = L"-\cos(2ξ)", lw = 1, color = :red)
     end
 
     if titleTxt isa String
@@ -549,13 +553,15 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
     dtrb = trb .- trb0;
 
     plts = Vector{Any}();
+    nplots = 1;
+
     intr = 2; # how many edge points to exclude
     ξcut = ξi[intr+1:end-intr];
-
-    nplots = 1;
+    
     plt = plot(ξcut, dϕ[intr+1:end-intr]/ϕ0sc*100, label = L"\delta\varphi", lw = 2, color = nplots;
                 xlabel = "", ylabel = "% φ", legend = :left,
                 legendfontsize = 10);
+    plot!(ξi, [0 for i in ξi], label = "", color = :grey, linestyle = :dash)
     # if titleTxt isa String
     #     title!(titleTxt)
     # end
@@ -565,6 +571,7 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
         plt = plot(ξcut, dtrE[intr+1:end-intr]/trE0sc*100, label = L"\delta E_{\alpha}^{\alpha}", lw = 2, color = nplots;
                 xlabel = "", ylabel = "% E", legend = :left,
                 legendfontsize = 10);
+        plot!(ξi, [0 for i in ξi], label = "", color = :grey, linestyle = :dash)
         push!(plts, plt); nplots += 1;
     end
 
@@ -572,6 +579,7 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
         plt = plot(ξcut, dtrσ[intr+1:end-intr]/trσ0sc*100, label = L"\delta\sigma_{\alpha}^{\alpha}", lw = 2, color = nplots;
                 xlabel = "", ylabel = "% σ", legend = :left,
                 legendfontsize = 10);
+        plot!(ξi, [0 for i in ξi], label = "", color = :grey, linestyle = :dash)
         push!(plts, plt); nplots += 1;
     end
 
@@ -579,6 +587,7 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
         plt = plot(ξcut, dtrb[intr+1:end-intr]/trb0sc*100, label = L"\delta b_{\alpha}^{\alpha}", lw = 2, color = nplots;
                 xlabel = "ξ", ylabel = "% b", legend = :left,
                 legendfontsize = 10);
+        plot!(ξi, [0 for i in ξi], label = "", color = :grey, linestyle = :dash)
         push!(plts, plt); nplots += 1;
     end
     
@@ -602,6 +611,8 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
     return pltbig;
 end
 
+
+
 # function visualise(ϕ, X, Y, ϵsq, titleTxt = false; αboost = 1)
 #     # wrapper visualisation function to display all relevant plots at once 
 #     # αboost: increases perturbation. Set to 1 for no boost
@@ -621,9 +632,9 @@ end
 function visualise(ϕ, X, Y, ϵsq, titleTxt = false; αboost = 1)
     # wrapper visualisation function to display all relevant plots at once 
     # αboost: increases perturbation. Set to 1 for no boost
-    X = X0 .+ αboost*(X .- X0); Y = Y0 .+ αboost*(Y .- Y0);
-    pltA = visShape(ϕ, X, Y, titleTxt); 
-    pltB = visDqtys(ϕ, X, Y; plotTrE = true, plotStress = true, plotCurv = true);
+    Xb = X0 .+ αboost*(X .- X0); Yb = Y0 .+ αboost*(Y .- Y0);
+    pltA = visShape(ϕ, Xb, Yb, titleTxt); 
+    pltB = visDqtys(ϕ, X, Y; plotTrE = true, plotStress = false, plotCurv = false);
     combined = plot(pltA, pltB, layout = (1,2)); 
     return combined;
 end
@@ -874,6 +885,13 @@ end
 #         plotTrE = true, plotStress = true, plotCurv = true);
 # display(pt);
 
-EV .= EV2top;
-pt = visualise(EV[:,1], EV[:,2], EV[:,3], 3, "EV1")
-display(pt); 
+# EV .= EV2top;
+# pt = visualise(EV[:,1], EV[:,2], EV[:,3], 3, "EV1", αboost = 10)
+# display(pt); 
+
+
+
+
+
+
+
