@@ -1,7 +1,7 @@
 
 
 using LinearAlgebra, DifferentialEquations, BandedMatrices; # calculations
-using Plots, LaTeXStrings, Measures; # plots
+using Plots, LaTeXStrings, Measures, Subscripts; # plots
 import GLMakie, Makie, FileIO; # 3D plots 
 using Optim, ForwardDiff; # optimisation
 # using JLD2; # deprecated?
@@ -25,7 +25,7 @@ h = 20.0 # bilayer thickness (20). NOTE: this interacts with Ω
 b = 5.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
 κ = 1.0; # TODO morphogen stress upregulation coefficient (1 for now)  
 ζ = 0.2; # morphogen decay rate (0.2)  
-D = 1000.0; # morphogen diffusion coefficient (0.01) # SPHERHARM
+D = 1000.0; # morphogen diffusion coefficient (0.01) 
 
 # PARAM SETS OF NOTE: 
 # - (A) 
@@ -39,7 +39,7 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on ξ (40)
 ξmin = -π/2; ξmax = π/2; # bounds of ξ values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.03) 
-tmax = 70*dt; # max time (400 * dt for evec). 
+tmax = 80*dt; # max time (400 * dt for evec). 
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
 ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
 dξint = 0.01; # small number: distance inside the ξ grid to start at to avoid div0
@@ -444,6 +444,48 @@ function visShape(ϕ, X, Y, titleTxt = false; αboost = 1)
     return plt;
 end
 
+function visShapeSimple(ϕ, X, Y, titleTxt = false; αboost = 1, ψ = 0)
+    # same as above but simpler
+    # allows to rotate by psi (in degrees)
+    X = X0 .+ αboost*(X .- X0); Y = Y0 .+ αboost*(Y .- Y0);
+    X = [X;-reverse(X)]; Y = [Y;reverse(Y)]; ϕ = [ϕ;reverse(ϕ)] # create full shape 
+    
+    ψ = ψ * π/180 .+ π/2; # convert to rad and polar angle
+    cψ = cos(ψ); sψ = sin(ψ)
+
+    # rotate 
+    rpts = sqrt.(X.^2 .+ Y.^2);
+    θpts = atan.(X, Y);
+    X = rpts .* cos.(θpts .+ ψ); Y = rpts .* sin.(θpts .+ ψ);
+
+    plt = plot(X, Y, line_z = ϕ, lw = 6, alpha = 0.7,
+                c = cmap, colorbar_title = "Morphogen concentration (φ)",
+                colorbar_ticks = false, colorbar_ticklabels = false,   
+                label = "", 
+                aspect_ratio = :equal, legend = :topright,
+                legendfontsize = 11, titlefontsize = 20, tickfontsize = 14, 
+                guidefontsize = 14, colorbar_titlefontsize = 14,
+                xticks = [], yticks = [],
+                size = (460, 400));
+
+    # Plot material points 
+    scatter!(X, Y, ms = 2, color = :black, label = "")
+
+    # dummy bit to get hydra shape in legend 
+    scatter!([1000, 2000], [1000, 2000], ms = 0.3, color = :black, label = "Hydra shape")
+
+    # plot initial shape 
+    plot!(X0, Y0, lw = 1, color = :grey, ls = :dash, label = "Steady-state"); 
+    plot!(-X0, Y0, lw = 1, color = :grey, ls = :dash, label = "");
+
+    xlabel!("x"); ylabel!("y");
+    lm = 1.33 * r; xlims!(-lm, lm); ylims!(-lm, lm);
+    
+    title!(titleTxt)
+
+    return plt;
+end
+
 function visDeform(ϕ, X, Y)
     # takes a surface discretised parameterisation and morphogen concentration
     # displays a plot of just the deformation, i.e. the difference between main shape and IC
@@ -722,8 +764,8 @@ X .= X0; Y .= Y0; Xdash .= X0dash; Ydash .= Y0dash;
 # ϕ .= ϕ0topBump;  
 # ϕ .= ϕ0sideBump;
 # ϕ .= ϕ0bottomBump;
-ϕ .= ϕ0doubleBump;
-# ϕ .= ϕ0bumpy;
+# ϕ .= ϕ0doubleBump;
+ϕ .= ϕ0bumpy;
 # ϕ .= ϕ0; 
 
 # save initial strain squared
@@ -739,7 +781,7 @@ dZZ = zeros(Ndisc, 3); dϕ = zeros(Ndisc); dX = zeros(Ndisc); dY = zeros(Ndisc);
 EV = zeros(Ndisc, 3);
 
 runsim = false;
-doProj = false; # whether to project vs just do time evolution 
+doProj = true; # whether to project vs just do time evolution 
 
 tstart = time();
 if runsim
@@ -787,11 +829,9 @@ if runsim
         end
 
         # special code for getting midyear review plots. Show some frames, then all info, then blowup frame
-        # if n in [1, 8, 16, Ntimes-1]
-        #     savefig(frameShapeAnim, "$n.png")
-        # elseif n == Ntimes-2
-        #     savefig(frameFullAnim, "$n.png")
-        # end
+        if n in [1, 37, 70, Ntimes-1]
+            savefig(frameFullAnim, "$n.png")
+        end
 
         # Step D: raise a warning if any of the updates failed.
         if !Optim.converged(shapeRes)
@@ -885,13 +925,13 @@ end
 #         plotTrE = true, plotStress = true, plotCurv = true);
 # display(pt);
 
-# EV .= EV2top;
-# pt = visualise(EV[:,1], EV[:,2], EV[:,3], 3, "EV1", αboost = 10)
-# display(pt); 
+# EV .= EV3r;
+# pt = visualise(EV[:,1], EV[:,2], EV[:,3], 3, "EV3", αboost = 3)
+# display(pt); savefig(pt, "EV3.png"); 
 
-
-
-
+EV .= EV1r;
+pt = visShapeSimple(EV[:,1], EV[:,2], EV[:,3], L"Z_{1}", αboost = 5, ψ = -130);
+display(pt); savefig(pt, "Z1.png")
 
 
 
