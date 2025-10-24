@@ -4,7 +4,7 @@ using LinearAlgebra, DifferentialEquations, BandedMatrices; # calculations
 using Plots, LaTeXStrings, Measures, Subscripts; # plots
 import GLMakie, Makie, FileIO; # 3D plots 
 using Optim, ForwardDiff; # optimisation
-# using JLD2; # deprecated?
+using JLD2; # loading and saving data 
 using Polynomials; # testing 
 println("running...");
 
@@ -444,11 +444,13 @@ function visShape(ϕ, X, Y, titleTxt = false; αboost = 1)
     return plt;
 end
 
-function visShapeSimple(ϕ, X, Y, titleTxt = false; αboost = 1, ψ = 0)
+function visShapeSimple(ϕ, X, Y, titleTxt = false; αboost = 1, ψ = 0, undef = false)
     # same as above but simpler
     # allows to rotate by psi (in degrees)
+    # allows to plot undeformed shape as well 
     X = X0 .+ αboost*(X .- X0); Y = Y0 .+ αboost*(Y .- Y0);
     X = [X;-reverse(X)]; Y = [Y;reverse(Y)]; ϕ = [ϕ;reverse(ϕ)] # create full shape 
+    Y = Y.+7;
     
     ψ = ψ * π/180 .+ π/2; # convert to rad and polar angle
     cψ = cos(ψ); sψ = sin(ψ)
@@ -462,11 +464,12 @@ function visShapeSimple(ϕ, X, Y, titleTxt = false; αboost = 1, ψ = 0)
                 c = cmap, colorbar_title = "Morphogen concentration (φ)",
                 colorbar_ticks = false, colorbar_ticklabels = false,   
                 label = "", 
-                aspect_ratio = :equal, legend = :topright,
+                aspect_ratio = :equal, legend = :bottomright,
                 legendfontsize = 11, titlefontsize = 20, tickfontsize = 14, 
                 guidefontsize = 14, colorbar_titlefontsize = 14,
                 xticks = [], yticks = [],
-                size = (460, 400));
+                size = (460, 400),
+    );
 
     # Plot material points 
     scatter!(X, Y, ms = 2, color = :black, label = "")
@@ -475,8 +478,13 @@ function visShapeSimple(ϕ, X, Y, titleTxt = false; αboost = 1, ψ = 0)
     scatter!([1000, 2000], [1000, 2000], ms = 0.3, color = :black, label = "Hydra shape")
 
     # plot initial shape 
-    plot!(X0, Y0, lw = 1, color = :grey, ls = :dash, label = "Steady-state"); 
-    plot!(-X0, Y0, lw = 1, color = :grey, ls = :dash, label = "");
+    if undef 
+        plot!(R0*Cosξ, R0*Sinξ, lw = 1, color = :grey, ls = :dash, label = "Reference surface"); 
+        plot!(-R0*Cosξ, R0*Sinξ, lw = 1, color = :grey, ls = :dash, label = "");
+    else
+        plot!(X0, Y0, lw = 1, color = :grey, ls = :dash, label = "Steady-state"); 
+        plot!(-X0, Y0, lw = 1, color = :grey, ls = :dash, label = "");
+    end
 
     xlabel!("x"); ylabel!("y");
     lm = 1.33 * r; xlims!(-lm, lm); ylims!(-lm, lm);
@@ -484,6 +492,43 @@ function visShapeSimple(ϕ, X, Y, titleTxt = false; αboost = 1, ψ = 0)
     title!(titleTxt)
 
     return plt;
+end
+
+function plotHSS()
+    # simplifies to just plot homogeneous steady-state
+    X = X0; Y = Y0; ϕ = ϕ0; # set to steady-state
+    X = [X;-reverse(X)]; Y = [Y;reverse(Y)]; ϕ = [ϕ;reverse(ϕ)] # create full shape 
+
+    plt = plot(X, Y, line_z = ϕ, lw = 6, alpha = 0.7,
+                c = cmap, colorbar_title = "Morphogen concentration (φ)",
+                colorbar_ticks = false, colorbar_ticklabels = false,   
+                label = "", 
+                aspect_ratio = :equal, legend = :topright,
+                legendfontsize = 11, titlefontsize = 20, tickfontsize = 14, 
+                guidefontsize = 14, colorbar_titlefontsize = 14,
+                xticks = [], yticks = [],
+                size = (460, 400),
+                yaxis = false
+    );
+
+    # Plot material points 
+    scatter!(X, Y, ms = 2, color = :black, label = "")
+
+    # dummy bit to get hydra shape in legend 
+    scatter!([1000, 2000], [1000, 2000], ms = 0.3, color = :black, label = "Hydra shape")
+ 
+    plot!(R0*Cosξ, R0*Sinξ, lw = 1, color = :grey, ls = :dash, label = "Reference surface"); 
+    plot!(-R0*Cosξ, R0*Sinξ, lw = 1, color = :grey, ls = :dash, label = "");
+
+    # dummy ahh y axis 
+    vline!([0.0], lw = 1.3, ls = :solid, label = "", color = :black)
+    annotate!(20, 0, ("y", 14, :black, :center))
+
+    xlabel!("x"); # ylabel!("y");
+    lm = 1.33 * r; xlims!(-lm, lm); ylims!(-lm, lm);
+
+    return plt;
+
 end
 
 function visDeform(ϕ, X, Y)
@@ -710,6 +755,10 @@ function vis3D(ϕ, X, Y, titleTxt = false; αboost3D = 1, deform = false)
     (dX3D, dY3D, dZ3D) = X3D .- X03D, Y3D .- Y03D, Z3D .- Z03D;
     (X3D, Y3D, Z3D) = X03D .+ αboost3D*dX3D, Y03D .+ αboost3D*dY3D, Z03D .+ αboost3D*dZ3D;
 
+    # try sharper boost 
+    # bt(x) = sign.(x) .* abs(x).^2;
+    # (X3D, Y3D, Z3D) = X03D .+ αboost3D*bt.(dX3D), Y03D .+ αboost3D*bt.(dY3D), Z03D .+ αboost3D*bt.(dZ3D);
+
     # convert to just deformed if required
     X3D = deform ? dX3D : X3D;
     Y3D = deform ? dY3D : Y3D; 
@@ -929,9 +978,13 @@ end
 # pt = visualise(EV[:,1], EV[:,2], EV[:,3], 3, "EV3", αboost = 3)
 # display(pt); savefig(pt, "EV3.png"); 
 
-EV .= EV1r;
-pt = visShapeSimple(EV[:,1], EV[:,2], EV[:,3], L"Z_{1}", αboost = 5, ψ = -130);
-display(pt); savefig(pt, "Z1.png")
+# EV .= EV1r;
+# pt = visShapeSimple(EV[:,1], EV[:,2], EV[:,3], L"Z_{1}", αboost = 5, ψ = 180); # ψ = -130
+# display(pt); savefig(pt, "Z1.png")
 
+# pt = plotHSS()
+# display(pt); savefig(pt, "HSS.pdf")
 
-
+EV .= EV3r;
+pt = vis3D(EV[:,1], EV[:,2], EV[:,3]; αboost3D = 8, deform = false);
+display(pt);
