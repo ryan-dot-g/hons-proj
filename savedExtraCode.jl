@@ -184,3 +184,74 @@ function TroubleshootICs()
 
     # ZZ0 = hcat(ϕ0num, X0num, Y0num);
 end
+
+function extraVisScatterDqtys()
+    # scatters dE against dphi 
+        # experimenting 
+    # pexp = scatter(dϕ[intr+1:end-intr], dtrE[intr+1:end-intr], 
+    #                 xlabel = L"\delta\varphi", ylabel = L"\delta E_{\alpha}^{\alpha}",
+    #                 legend = false)
+    # scatter!([0],[0], color = 2);
+    # if titleTxt isa String
+    #     title!(titleTxt)
+    # end
+    # linfit = fit(dϕ[intr+1:end-intr], dtrE[intr+1:end-intr], 1)   # degree-1 polynomial
+    # print(coeffs(linfit));
+    # display(pexp)
+end
+
+function oldVisualise()
+    # old vis with all the old plots 
+    # function visualise(ϕ, X, Y, ϵsq, titleTxt = false; αboost = 1)
+    #     # wrapper visualisation function to display all relevant plots at once 
+    #     # αboost: increases perturbation. Set to 1 for no boost
+    #     X = X0 .+ αboost*(X .- X0); Y = Y0 .+ αboost*(Y .- Y0);
+    #     pltA = visShape(ϕ, X, Y); 
+    #     pltB = visRdef(ϕ, X, Y);
+    #     # pltC = visDeform(ϕ, X, Y);
+    #     pltC = visVecDeform(ϕ, X, Y);
+    #     pltD = visQtys(ϕ, ϵsq, X, Y, plotE = false, plotStress = true);
+    #     combined = plot(pltA, pltB, pltC, pltD, layout = (2,2), size=(800,600)); 
+    #     if titleTxt isa String
+    #         title!(titleTxt)
+    #     end
+    #     return combined;
+    # end
+end
+
+function allDerivOperators()
+    # including past operators for the derivative 
+    # first deriv - no boundary conditions, just a higher order forward/backward difference on the ends
+    # used for x deriv 
+    Px = Matrix( Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)) ) # main section 
+    Px[1, 1] = -3; Px[1, 2] = 4; Px[1, 3] = -1; # forward diff top row 3rd order
+    Px[Ndisc, Ndisc] = 3; Px[Ndisc, Ndisc-1] = -4; Px[Ndisc, Ndisc-2] = 1; # backward diff bottom row 
+    # Px[1,1:2] = 2*[-1, 1] # trying first-order difference 
+    # Px[Ndisc, Ndisc-1:Ndisc] = 2*[-1, 1]
+    Px /= (2*dξ); # scale 
+
+    # first deriv - 0 bcs, used for y and morphogen. Top and bottom row = 0
+    # Py = Matrix( Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)) );
+    # Py[1, :] .= 0.0; Py[Ndisc, :] .= 0.0
+    # Py /= (2*dξ);
+    Py = Px;
+
+    # first deriv periodic bcs 
+    # Py = Matrix( Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)) );
+    # Py[1, :] .= 0.0; Py[Ndisc, :] .= 0.0;
+    # Py[1, 2] = 1.0; Py[1, end] = -1.0; 
+    # Py[Ndisc, 1] = 1.0; Py[Ndisc, Ndisc-1] = -1.0;
+    # Py /= (2*dξ);
+end
+
+function TrStrSqExtra()
+    # extra code prev used for testing in trStrSq code
+    # handle boundary different if ξ coords go all the way to the boundary 
+    # if Si[1] == -π/2
+    #     t2[interior] = X[interior].^2 ./ (Cosξ[interior].^2); # interior is just x/cos^2 
+    #     t2[[1,end]] .= r^2; # boundary is when x(ξ)~r cos(ξ)
+    # else
+    #     t2 = X.^2 ./ Cosξ.^2;
+    # end
+    # t2 = t2 .- R0^2; 
+end

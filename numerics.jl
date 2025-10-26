@@ -19,16 +19,13 @@ simFP = "C:/Users/rgray/OneDrive/ryan/Uni/HONOURS/hons-proj/vids"
 ############ -------------------------------------------------- ############
 # Length units in μm, time units in hr 
 R0 = 130; # radius of force-free reference sphere (130)
-r = 160; # radius of initial condition sphere (160 for now) 
+r = 160; # radius of initial condition sphere (160) 
 F0 = 440.0; # base Young's modulus (440). NOTE: this interacts with Ω
 h = 20.0 # bilayer thickness (20). NOTE: this interacts with Ω
 b = 5.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
-κ = 1.0; # TODO morphogen stress upregulation coefficient (1 for now)  
+κ = 1.0; # (1)
 ζ = 0.2; # morphogen decay rate (0.2)  
-D = 1000.0; # morphogen diffusion coefficient (0.01) 
-
-# PARAM SETS OF NOTE: 
-# - (A) 
+D = 1000.0; # morphogen diffusion coefficient (1000) 
 
 F(ϕ) = F0 * h * exp(-b*ϕ); # elasticity function
 f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function 
@@ -39,13 +36,13 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on ξ (40)
 ξmin = -π/2; ξmax = π/2; # bounds of ξ values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.03) 
-tmax = 80*dt; # max time (400 * dt for evec). 
-Ω = 1e1; # not too large number: punishing potential for volume deviation (1e2)
-ω = 1e-1; # not too large number: surface friction (1e1 for base pin, 1e-1 for X-X0)
-dξint = 0.01; # small number: distance inside the ξ grid to start at to avoid div0
+tmax = 400*dt; # max time (400 * dt for evec). 
+Ω = 1e1; # not too large number: punishing potential for volume deviation (1e1)
+ω = 1e-1; # not too large number: surface friction (1e1)
+dξint = 0.01; # small number: distance inside the ξ grid to start at to avoid div0 (0.01)
 # dξint = (π/Ndisc)/2;
-maxIter = 15000; # iteratinos for the shape update (v expensive), 15000 usually 
-lenEvalEst = 10; # how many final iterations to average eigenvalue over 
+maxIter = 15000; # iterations for the shape update (v expensive), (15000)
+lenEvalEst = 10; # how many final iterations to average eigenvalue over (10)
 
 cfl = 2 * D * dt / (π/Ndisc)^2; # cfl condition for diffusion, checking sensible. ds is approximate 
 # println("CFL number (should be <<1): $(round(cfl, digits = 5))")
@@ -56,7 +53,8 @@ cfl = 2 * D * dt / (π/Ndisc)^2; # cfl condition for diffusion, checking sensibl
 plotRes = 1; # how many timesteps per plot (Inf for just 1st and last plots)
 cmap = cgrad(:viridis); # colormap for morphogen concentration 
 αboost = 2; # factor to plot the eigenvector (1 to plot it exactly as seen) (2)
-spacer() = plot(legend=false, framestyle = :none, grid=false, xlims=(0,.1), ylims=(0,.1))
+spacer() = plot(legend=false, framestyle = :none, grid=false, xlims=(0,.1), ylims=(0,.1)) # spacer to add space between plots
+rescale(home, target) = minimum(target) .+ (home .- minimum(home)) .* ((maximum(target) - minimum(target)) / (maximum(home) - minimum(home))); # to rescale spherical harmonics
 
 ############ -------------------------------------------------- ############
 ############ ---------------- NUMERICAL SETUP ----------------- ############
@@ -90,32 +88,18 @@ Ndisc3D = 100; # discretisation level in 3D
 Px = Matrix( Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)) ) # main section 
 Px[1, 1] = -3; Px[1, 2] = 4; Px[1, 3] = -1; # forward diff top row 3rd order
 Px[Ndisc, Ndisc] = 3; Px[Ndisc, Ndisc-1] = -4; Px[Ndisc, Ndisc-2] = 1; # backward diff bottom row 
-# Px[1,1:2] = 2*[-1, 1] # trying first-order difference 
-# Px[Ndisc, Ndisc-1:Ndisc] = 2*[-1, 1]
 Px /= (2*dξ); # scale 
 
-# first deriv - 0 bcs, used for y and morphogen. Top and bottom row = 0
-# Py = Matrix( Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)) );
-# Py[1, :] .= 0.0; Py[Ndisc, :] .= 0.0
-# Py /= (2*dξ);
-Py = Px;
-
-# first deriv periodic bcs 
-# Py = Matrix( Tridiagonal(fill(-1.0, Ndisc-1), fill(0.0, Ndisc), fill(1.0, Ndisc-1)) );
-# Py[1, :] .= 0.0; Py[Ndisc, :] .= 0.0;
-# Py[1, 2] = 1.0; Py[1, end] = -1.0; 
-# Py[Ndisc, 1] = 1.0; Py[Ndisc, Ndisc-1] = -1.0;
-# Py /= (2*dξ);
+Py = Px; # Y-deriv, same as x after some testing 
 
 # convert to functions 
 FDX(J) = Px*J;
 FDY(J) = Py*J;
 FDCT(J) = diff(J)/dξ; # centered first derivative
 
-
 # integral over total ξ domain, using trapezoid rule
 integrateξdom(Qty) = dξ * ( sum(Qty) - (Qty[1] + Qty[end])/2 );
-integrateξdomCt(QtyCt) = Ndisc/(Ndisc-1) * integrateξdom(QtyCt); # centered needs correction
+integrateξdomCt(QtyCt) = Ndisc/(Ndisc-1) * integrateξdom(QtyCt); # centered, integral needs correction
 
 # inner product for eigenvector calculation 
 inp(ZZ1, ZZ2) = integrateξdom((ZZ1[:,1].*ZZ2[:,1] .+ ZZ1[:,2].*ZZ2[:,2]/r^2 
@@ -175,14 +159,6 @@ function trStrSq(X, Y, Xdash, Ydash)
     # takes vectors of the surface parameterisation x(ξ), y(ξ) and derivatives w.r.t. s
     # returns a vector containing the trace of the square of the strain tensor at each s
     t1 = (Xdash).^2 .+ (Ydash).^2 .- R0^2;
-    # handle boundary different if ξ coords go all the way to the boundary 
-    # if Si[1] == -π/2
-    #     t2[interior] = X[interior].^2 ./ (Cosξ[interior].^2); # interior is just x/cos^2 
-    #     t2[[1,end]] .= r^2; # boundary is when x(ξ)~r cos(ξ)
-    # else
-    #     t2 = X.^2 ./ Cosξ.^2;
-    # end
-    # t2 = t2 .- R0^2; 
     t2 = (X.^2 ./ Cosξ.^2) .- R0^2;
 
     return 1/(4*R0^4) * (t1.^2 .+ t2.^2); 
@@ -284,10 +260,6 @@ function UpdateShape!(Fϕ, X, Y, Xdash, Ydash)
     # takes the current state data (shape and morphogen concentration), and updates X, Y 
     # and derivatives IN PLACE, by minimising the energy functional 
     # returns results of the optim
-
-    # currently no BCs in the optim, but these could be useful if implemented 
-    # lbounds = [dsint * 0.9; Vector(1:Ndisc-2)*-Inf; dsint*0.9; Vector(1:Ndisc)*-Inf ];
-    # ubounds = [dsint * 1.1; Vector(1:Ndisc-2)*Inf; dsint*1.1; Vector(1:Ndisc)*Inf];
     
     result = optimize(x -> EFwrapped(x, Fϕ), 
                     [X; Y], 
@@ -628,6 +600,7 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
                     plotTrE = false, plotStress = false, plotCurv = false)
     # same as above but only plots perturbation in qtys, and stacks plots 
 
+
     # first calculate necessary quantities 
     Xdash = FDX(X); Ydash = FDY(Y);
 
@@ -649,9 +622,13 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
                 xlabel = "", ylabel = "% φ", legend = :left,
                 legendfontsize = 10);
     plot!(ξi, [0 for i in ξi], label = "", color = :grey, linestyle = :dash)
-    # if titleTxt isa String
-    #     title!(titleTxt)
-    # end
+
+    # spherical harmonics 
+    # e2 = rescale(-Sinξ[intr+1:end-intr], dϕ[intr+1:end-intr]/ϕ0sc*100); 
+    # e3 = rescale(-cos.(2*ξi)[intr+1:end-intr], dϕ[intr+1:end-intr]/ϕ0sc*100);
+    # e4 = rescale(sin.(3*ξi)[intr+1:end-intr], dϕ[intr+1:end-intr]/ϕ0sc*100);
+    # plot!(ξcut, e4, label = L"Y_{ij}", color = :black, lw = 1) # SPHHM
+    
     push!(plts, plt); nplots += 1;
 
     if plotTrE
@@ -682,39 +659,8 @@ function visDqtys(ϕ, X, Y, titleTxt = false;
     ht = 125 * (nplots-1);
     pltbig = plot(plts...; layout = (nplots-1, 1), size = (wd, ht))
 
-    # experimenting 
-    # pexp = scatter(dϕ[intr+1:end-intr], dtrE[intr+1:end-intr], 
-    #                 xlabel = L"\delta\varphi", ylabel = L"\delta E_{\alpha}^{\alpha}",
-    #                 legend = false)
-    # scatter!([0],[0], color = 2);
-    # if titleTxt isa String
-    #     title!(titleTxt)
-    # end
-    # linfit = fit(dϕ[intr+1:end-intr], dtrE[intr+1:end-intr], 1)   # degree-1 polynomial
-    # print(coeffs(linfit));
-    # display(pexp)
-
-
     return pltbig;
 end
-
-
-
-# function visualise(ϕ, X, Y, ϵsq, titleTxt = false; αboost = 1)
-#     # wrapper visualisation function to display all relevant plots at once 
-#     # αboost: increases perturbation. Set to 1 for no boost
-#     X = X0 .+ αboost*(X .- X0); Y = Y0 .+ αboost*(Y .- Y0);
-#     pltA = visShape(ϕ, X, Y); 
-#     pltB = visRdef(ϕ, X, Y);
-#     # pltC = visDeform(ϕ, X, Y);
-#     pltC = visVecDeform(ϕ, X, Y);
-#     pltD = visQtys(ϕ, ϵsq, X, Y, plotE = false, plotStress = true);
-#     combined = plot(pltA, pltB, pltC, pltD, layout = (2,2), size=(800,600)); 
-#     if titleTxt isa String
-#         title!(titleTxt)
-#     end
-#     return combined;
-# end
 
 function visualise(ϕ, X, Y, ϵsq, titleTxt = false; αboost = 1)
     # wrapper visualisation function to display all relevant plots at once 
@@ -765,12 +711,16 @@ function vis3D(ϕ, X, Y, titleTxt = false; αboost3D = 1, deform = false)
 
     plt = GLMakie.surface(X3D, Y3D, Z3D,
                 axis = (type = GLMakie.Axis3, azimuth = pi/4,
-                           aspect = :equal),
-                color = ϕ3D, colormap = cmap);
+                           aspect = :equal,
+                           xticksvisible = false, yticksvisible = false, zticksvisible = false,
+                            xticklabelsvisible = false, yticklabelsvisible = false, zticklabelsvisible = false,
+                            xlabelvisible = false, ylabelvisible = false, zlabelvisible = false, 
+                            xspinesvisible = false, yspinesvisible = false, zspinesvisible = false,
+                            xgridvisible = false, ygridvisible = false, zgridvisible = false,
+                            title = titleTxt, titlesize = 40),  
+                color = ϕ3D, colormap = cmap,);
 
-    if titleTxt isa String
-        title!(titleTxt)
-    end
+    # title!(titleTxt)
     return plt;
 end
 
@@ -797,7 +747,6 @@ dEV2topNorm = inp(dEV2top, dEV2top);
 @load "EVs//EV3r.jld2" EV3r;
 dEV3r = EV3r .- ZZ0; 
 dEV3rNorm = inp(dEV3r, dEV3r);
-
 
 ############ -------------------------------------------------- ############
 ############ ---------------- TIME EVOLUTION ------------------ ############
@@ -829,7 +778,7 @@ runAnim = true;
 dZZ = zeros(Ndisc, 3); dϕ = zeros(Ndisc); dX = zeros(Ndisc); dY = zeros(Ndisc);
 EV = zeros(Ndisc, 3);
 
-runsim = false;
+runsim = true;
 doProj = true; # whether to project vs just do time evolution 
 
 tstart = time();
@@ -877,10 +826,10 @@ if runsim
             frame(shapeAnim, frameShapeAnim) 
         end
 
-        # special code for getting midyear review plots. Show some frames, then all info, then blowup frame
-        if n in [1, 37, 70, Ntimes-1]
-            savefig(frameFullAnim, "$n.png")
-        end
+        # special code for getting thesis.
+        # if n in [1, 37, 70, Ntimes-1]
+        #     savefig(frameFullAnim, "$n.png")
+        # end
 
         # Step D: raise a warning if any of the updates failed.
         if !Optim.converged(shapeRes)
@@ -976,7 +925,7 @@ end
 
 # EV .= EV3r;
 # pt = visualise(EV[:,1], EV[:,2], EV[:,3], 3, "EV3", αboost = 3)
-# display(pt); savefig(pt, "EV3.png"); 
+# display(pt); # savefig(pt, "EV3.png"); 
 
 # EV .= EV1r;
 # pt = visShapeSimple(EV[:,1], EV[:,2], EV[:,3], L"Z_{1}", αboost = 5, ψ = 180); # ψ = -130
@@ -985,6 +934,6 @@ end
 # pt = plotHSS()
 # display(pt); savefig(pt, "HSS.pdf")
 
-EV .= EV3r;
-pt = vis3D(EV[:,1], EV[:,2], EV[:,3]; αboost3D = 8, deform = false);
-display(pt);
+# EV .= EV2top;
+# pt = vis3D(EV[:,1], EV[:,2], EV[:,3], L"Z_{2a}"; αboost3D = 1, deform = false);
+# display(pt);
