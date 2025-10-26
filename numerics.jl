@@ -23,7 +23,7 @@ r = 160; # radius of initial condition sphere (160)
 F0 = 440.0; # base Young's modulus (440). NOTE: this interacts with Ω
 h = 20.0 # bilayer thickness (20). NOTE: this interacts with Ω
 b = 5.0; # exponential decrease of stiffness (5). NOTE: this interacts with Ω
-κ = 1.0; # (1)
+κ = 1.0; # (1.0)
 ζ = 0.2; # morphogen decay rate (0.2)  
 D = 1000.0; # morphogen diffusion coefficient (1000) 
 
@@ -36,7 +36,7 @@ f(ϵsq) = κ * ϵsq; # strain-dependent morphogen expression function
 Ndisc = 40; # number of discretisation points on ξ (40)
 ξmin = -π/2; ξmax = π/2; # bounds of ξ values (-π/2, π/2)
 dt = 0.03; # time discretisation (0.03) 
-tmax = 400*dt; # max time (400 * dt for evec). 
+tmax = 100*dt; # max time (250 * dt for evec). 
 Ω = 1e1; # not too large number: punishing potential for volume deviation (1e1)
 ω = 1e-1; # not too large number: surface friction (1e1)
 dξint = 0.01; # small number: distance inside the ξ grid to start at to avoid div0 (0.01)
