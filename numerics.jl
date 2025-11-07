@@ -425,7 +425,6 @@ function visShapeSimple(ϕ, X, Y, titleTxt = false; αboost = 1, ψ = 0, undef =
     Y = Y.+7;
     
     ψ = ψ * π/180 .+ π/2; # convert to rad and polar angle
-    cψ = cos(ψ); sψ = sin(ψ)
 
     # rotate 
     rpts = sqrt.(X.^2 .+ Y.^2);
@@ -690,6 +689,11 @@ function vis3D(ϕ, X, Y, titleTxt = false; αboost3D = 1, deform = false)
     # surface through 3D space 
     # αboost3D enhances the perturbation to make it more visible. Set to 1 for no boost
     # deform: only plots deformation as its own surface 
+    GLMakie.activate!(; fxaa = true, scalefactor = 2.0)
+
+    # boost first 
+    bt(x) = sign.(x) .* abs(x).^1.2;
+    (X, Y) = X .+ bt.((X.-X0))*αboost3D, Y .+ bt.((Y.-Y0))*αboost3D
 
     # first, prepare the shape
     X3D = [X[i] * Cosθ[j] for i in 1:Ndisc, j in 1:Ndisc3D];
@@ -698,11 +702,12 @@ function vis3D(ϕ, X, Y, titleTxt = false; αboost3D = 1, deform = false)
     ϕ3D = [ϕ[i] * 1       for i in 1:Ndisc, j in 1:Ndisc3D];
 
     # next, boost it 
-    (dX3D, dY3D, dZ3D) = X3D .- X03D, Y3D .- Y03D, Z3D .- Z03D;
-    (X3D, Y3D, Z3D) = X03D .+ αboost3D*dX3D, Y03D .+ αboost3D*dY3D, Z03D .+ αboost3D*dZ3D;
+    # (dX3D, dY3D, dZ3D) = X3D .- X03D, Y3D .- Y03D, Z3D .- Z03D;
+    # (X3D, Y3D, Z3D) = X03D .+ αboost3D*dX3D, Y03D .+ αboost3D*dY3D, Z03D .+ αboost3D*dZ3D;
+    # (X3D, Y3D, Z3D) = X03D, Y03D .+ αboost3D*dY3D, Z03D;
 
     # try sharper boost 
-    # bt(x) = sign.(x) .* abs(x).^2;
+    # bt(x) = sign.(x) .* abs(x).^1.2;
     # (X3D, Y3D, Z3D) = X03D .+ αboost3D*bt.(dX3D), Y03D .+ αboost3D*bt.(dY3D), Z03D .+ αboost3D*bt.(dZ3D);
 
     # convert to just deformed if required
@@ -711,14 +716,15 @@ function vis3D(ϕ, X, Y, titleTxt = false; αboost3D = 1, deform = false)
 
     plt = GLMakie.surface(X3D, Y3D, Z3D,
                 axis = (type = GLMakie.Axis3, azimuth = pi/4,
-                           aspect = :equal,
-                           xticksvisible = false, yticksvisible = false, zticksvisible = false,
+                            aspect = :equal,
+                            perspectiveness = 0.0,
+                            xticksvisible = false, yticksvisible = false, zticksvisible = false,
                             xticklabelsvisible = false, yticklabelsvisible = false, zticklabelsvisible = false,
                             xlabelvisible = false, ylabelvisible = false, zlabelvisible = false, 
                             xspinesvisible = false, yspinesvisible = false, zspinesvisible = false,
                             xgridvisible = false, ygridvisible = false, zgridvisible = false,
-                            title = titleTxt, titlesize = 40),  
-                color = ϕ3D, colormap = cmap,);
+                            title = titleTxt, titlesize = 40, titlegap = 0),  
+                color = ϕ3D, colormap = cmap,)
 
     # title!(titleTxt)
     return plt;
@@ -778,7 +784,7 @@ runAnim = true;
 dZZ = zeros(Ndisc, 3); dϕ = zeros(Ndisc); dX = zeros(Ndisc); dY = zeros(Ndisc);
 EV = zeros(Ndisc, 3);
 
-runsim = true;
+runsim = false;
 doProj = true; # whether to project vs just do time evolution 
 
 tstart = time();
@@ -934,6 +940,9 @@ end
 # pt = plotHSS()
 # display(pt); savefig(pt, "HSS.pdf")
 
-# EV .= EV2top;
-# pt = vis3D(EV[:,1], EV[:,2], EV[:,3], L"Z_{2a}"; αboost3D = 1, deform = false);
-# display(pt);
+EV .= EV3r;
+pt = vis3D(EV[:,1], EV[:,2], EV[:,3], "EV3"; αboost3D = 1.5, deform = false); # 4 for Z2, 1.5 for Z3
+display(pt);
+# sleep(0.1); FileIO.save("snapshot.png", Makie.colorbuffer(pt)); 
+
+
